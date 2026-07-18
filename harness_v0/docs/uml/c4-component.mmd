@@ -1,0 +1,8 @@
+%% sources: architecture.md §Components, ADR-0002
+%% owner: api-component
+flowchart LR
+  Controller --> Service
+  Service --> Repository
+  Repository --> DB[(Database)]
+  Service --> Client[External Client]
+  Service --> Cache[(Cache)]

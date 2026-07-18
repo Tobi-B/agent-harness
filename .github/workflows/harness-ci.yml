@@ -1,0 +1,24 @@
+name: harness-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq (mikefarah v4, pinned)
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: shellcheck
+        run: shellcheck -x harness_v0/gates/*.sh harness_v0/tests/gates/*.sh
+
+      - name: Gate self-tests
+        run: bash harness_v0/tests/gates/test_gates.sh

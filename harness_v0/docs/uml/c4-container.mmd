@@ -1,0 +1,8 @@
+%% sources: architecture.md §Containers, ADR-0001
+%% owner: system-containers
+flowchart LR
+  Web[Web UI] --> API[API Service]
+  API --> DB[(Database)]
+  API --> Cache[(Cache)]
+  Worker[Background Worker] --> DB
+  Worker --> ExternalQueue[External Queue]
