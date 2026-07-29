@@ -101,12 +101,16 @@ harness — see `tools/sync-skill.sh` in the source repo.
 ## Rendering diagrams
 
 ```bash
-bash ~/.claude/skills/mermaid-render/render.sh -o docs/iterations/ITER-01.html \
-  --title "ITER-01 Design" docs/iterations/ITER-01.md
+bash ~/.claude/skills/mermaid-render/render.sh --shared-lib \
+  -o docs/iterations/ITER-01.html --title "ITER-01 Design" docs/iterations/ITER-01.md
 ```
 
 The page embeds the source's sha256, which is what the `design` gate checks for
 freshness.
+
+`--shared-lib` puts one `mermaid.min.js` next to the iteration pages and keeps
+each page at ~7 KB — worth it since these are committed. Drop the flag for a
+single self-contained file (~3.5 MB) when sending a review to someone.
 
 ## Testing the harness itself
 

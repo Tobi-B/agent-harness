@@ -39,7 +39,7 @@ Work the phase per its `agent_actions` in `workflow.yaml`:
 - **render** — in `model` and `design`, turn the Mermaid into a page the user
   can actually look at:
   ```
-  bash ~/.claude/skills/mermaid-render/render.sh -o <out>.html --title "<title>" <sources>
+  bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o <out>.html --title "<title>" <sources>
   ```
   Then show it with `SendUserFile` (`display: "render"`). Never ask for design
   approval without showing the rendered diagram first.

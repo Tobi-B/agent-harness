@@ -80,7 +80,7 @@ In `model` and `design`, render the Mermaid diagrams to a page the user can
 look at:
 
 ```bash
-bash ~/.claude/skills/mermaid-render/render.sh -o <out>.html --title "<title>" <sources>
+bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o <out>.html --title "<title>" <sources>
 ```
 
 Then show it (`SendUserFile` with `display: "render"`). The `design` gate

@@ -32,7 +32,7 @@ for s in "${stories[@]}"; do
   grep -qF "$s" "$ITER_MD" || fail "$ITER_MD does not reference story $s from the plan"
 done
 
-RENDER_CMD="bash ~/.claude/skills/mermaid-render/render.sh -o $ITER_HTML --title '$iter Design' $ITER_MD"
+RENDER_CMD="bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o $ITER_HTML --title '$iter Design' $ITER_MD"
 
 [ -f "$ITER_HTML" ] || fail "missing rendered $ITER_HTML — run: $RENDER_CMD"
 
