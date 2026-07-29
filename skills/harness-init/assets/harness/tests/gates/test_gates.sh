@@ -318,6 +318,75 @@ t "release passes with all boxes checked" bash "$GATES_DIR/release.sh"
 t "advance release" advance release
 t "workflow complete" test "$(status '.phases.release.gate_passed')" = "true"
 
+# --- autopilot (meta-0003) ---------------------------------------------------
+#
+# The fixture has walked to the end, so these run against a finished project:
+# what matters here is who may flip the switch and what the switch permits, not
+# the phase machine, which the loop tests above already cover.
+
+autopilot() { bash "$GATES_DIR/autopilot.sh" "$@"; }
+autopilot_on() {
+  HARNESS_AUTOPILOT_I_AM_HUMAN=1 autopilot on "$@" --by tester >/dev/null
+}
+
+t_fails "autopilot is off in a fresh harness" autopilot status
+t_fails "autopilot cannot be enabled without a terminal" \
+  env -u HARNESS_AUTOPILOT_I_AM_HUMAN HARNESS_ROOT="$FIXTURE" \
+      bash "$GATES_DIR/autopilot.sh" on < /dev/null
+t_fails "autopilot rejects an unreadable --expires" \
+  env HARNESS_AUTOPILOT_I_AM_HUMAN=1 HARNESS_ROOT="$FIXTURE" \
+      bash "$GATES_DIR/autopilot.sh" on --expires 9x
+t_fails "autopilot caps --expires at 3d" \
+  env HARNESS_AUTOPILOT_I_AM_HUMAN=1 HARNESS_ROOT="$FIXTURE" \
+      bash "$GATES_DIR/autopilot.sh" on --expires 7d
+t_fails "autopilot rejects a zero iteration budget" \
+  env HARNESS_AUTOPILOT_I_AM_HUMAN=1 HARNESS_ROOT="$FIXTURE" \
+      bash "$GATES_DIR/autopilot.sh" on --max-iterations 0
+
+t "autopilot turns on" autopilot_on --expires 4h --max-iterations 2
+t "autopilot reports on" autopilot status
+t "autopilot records who enabled it" test "$(status '.autopilot.enabled_by')" = "tester"
+
+mkdir -p "$FIXTURE/docs/iterations"
+echo "# ITER-99 autopilot fixture" > "$FIXTURE/docs/iterations/ITER-99.md"
+
+t "auto sign-off accepts an iteration artifact" \
+  bash "$GATES_DIR/signoff.sh" docs/iterations/ITER-99.md --auto
+t "auto sign-off is marked auto:true" \
+  test "$(status '.signed_off_artifacts[] | select(.path == "docs/iterations/ITER-99.md") | .auto')" = "true"
+t "auto sign-off is attributed to autopilot" \
+  bash -c "status() { yq \"\$1\" \"$FIXTURE/status.yaml\"; }; \
+           status '.signed_off_artifacts[] | select(.path == \"docs/iterations/ITER-99.md\") | .by' \
+           | grep -q '^autopilot('"
+t_fails "auto sign-off refuses a non-iteration artifact" \
+  bash "$GATES_DIR/signoff.sh" docs/prd.md --auto
+
+# Budget: charged once per iteration, no matter how many phases it carries.
+. "$GATES_DIR/_lib.sh"
+t "budget charges an iteration once" bash -c "
+  . '$GATES_DIR/_lib.sh'
+  autopilot_claim_iteration ITER-98
+  autopilot_claim_iteration ITER-98
+  [ \"\$(yq '.autopilot.iterations_used' '$FIXTURE/status.yaml')\" = '1' ]"
+t "budget charges a second iteration separately" bash -c "
+  . '$GATES_DIR/_lib.sh'
+  autopilot_claim_iteration ITER-97
+  [ \"\$(yq '.autopilot.iterations_used' '$FIXTURE/status.yaml')\" = '2' ]"
+t_fails "autopilot stops when the iteration budget is spent" autopilot status
+t_fails "auto sign-off refused once out of budget" \
+  bash "$GATES_DIR/signoff.sh" docs/iterations/ITER-99.md --auto
+
+t "autopilot turns on again with fresh budget" autopilot_on --expires 4h --max-iterations 1
+yq -i '.autopilot.expires_at = "2020-01-01T00:00:00Z"' "$FIXTURE/status.yaml"
+t_fails "autopilot stops when expired" autopilot status
+t_fails "auto sign-off refused once expired" \
+  bash "$GATES_DIR/signoff.sh" docs/iterations/ITER-99.md --auto
+
+t "autopilot turns off" autopilot off
+t "off is recorded" test "$(status '.autopilot.enabled')" = "false"
+t_fails "advance still needs a human when autopilot is off" \
+  bash "$GATES_DIR/advance.sh" discover < /dev/null
+
 # --- tool strictness ---------------------------------------------------------
 
 t_fails "implement fails on missing tools without opt-out" \

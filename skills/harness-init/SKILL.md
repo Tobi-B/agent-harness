@@ -63,12 +63,23 @@ The loop, and who does what:
 |---|---|
 | Interview, draft artifacts, render diagrams | agent |
 | `bash harness/gates/<phase>.sh` (pure check) | agent, freely |
-| `bash harness/gates/signoff.sh <artifact>` | **user only** |
-| `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction) |
+| `bash harness/gates/signoff.sh <artifact>` | **user only** (agent: `--auto` under autopilot) |
+| `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction, or under autopilot) |
+| `bash harness/gates/autopilot.sh on\|off\|status` | **user only** — enabling needs a terminal |
 
 Phases: `discover → architect → model → plan → ⟳(design → implement → verify) → release`.
 The middle three are iteration-scoped and repeat per iteration in
 `harness/docs/plan.md`.
+
+## Autopilot
+
+If the user wants unattended runs, tell them about
+`bash harness/gates/autopilot.sh on --expires 8h --max-iterations 3`. It hands
+the agent the iteration cycle only, expires on time and iteration count, and
+marks every machine approval `auto: true`. Only the user can enable it — it
+requires an interactive terminal — so offer it, never switch it on. It pairs
+naturally with Claude Code's built-in `/loop`, which supplies the heartbeat
+while the gates supply the guardrails.
 
 ## Notes
 

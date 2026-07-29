@@ -38,6 +38,31 @@ do not edit `signed_off_artifacts` — gates verify the recorded hash against th
 file's current content, so a forged or stale entry fails the gate. If you edit a
 signed-off artifact, tell the user it needs re-sign-off.
 
+The single exception is `--auto`, and only while the user has enabled autopilot
+(see below).
+
+## Autopilot — only if the user turned it on
+
+The user can hand you the iteration cycle with
+`bash harness/gates/autopilot.sh on [--expires 8h] [--max-iterations 3]`. Only
+they can enable it (it requires an interactive terminal); never try to enable it
+yourself, and never edit the `autopilot` block in `status.yaml`.
+
+Check with `bash harness/gates/autopilot.sh status` (exit 0 = on). While it is
+on, and only for `design`/`implement`/`verify`:
+
+- sign the iteration's own design file with
+  `bash harness/gates/signoff.sh docs/iterations/ITER-NN.md --auto` — it refuses
+  any other path, and records the approval as `auto: true` so the registry stays
+  honest about what no human read;
+- `bash harness/gates/advance.sh <phase>` proceeds without the prompt and spends
+  one iteration of budget.
+
+Autopilot changes who approves, not what is checked: gates still have to pass,
+and you still render the design and leave it for the user to find. If it is off,
+expired, or out of budget, stop and say so — do not reach for `--yes`.
+`discover`, `architect`, `model`, `plan` and `release` always wait for the user.
+
 ## Gates are executable and pure
 
 Each phase's gate is a runnable script under `harness/gates/`. Run them freely

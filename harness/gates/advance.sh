@@ -38,8 +38,19 @@ if [ "$scope" = "iteration" ]; then
   [ -n "$iter" ] || fail "phase '$phase' is iteration-scoped but status.yaml has no current_iteration"
 fi
 
-if [ "$assume_yes" -ne 1 ]; then
+# Autopilot stands in for the human prompt, but only inside the iteration cycle
+# and only while it has budget. Everything else still stops here.
+auto_advance=0
+if [ "$assume_yes" -ne 1 ] && autopilot_active_for "$phase"; then
+  auto_advance=1
+  echo "autopilot: advancing '$phase'${iter:+ ($iter)} without asking"
+fi
+
+if [ "$assume_yes" -ne 1 ] && [ "$auto_advance" -ne 1 ]; then
   if [ ! -t 0 ]; then
+    if autopilot_phase_in_scope "$phase"; then
+      warn "$(autopilot_enabled_and_valid || true)"
+    fi
     fail "phase transitions require user approval: run interactively or pass --yes on explicit user instruction"
   fi
   if [ -n "$iter" ]; then
@@ -58,6 +69,12 @@ echo "running gate: $phase${iter:+ ($iter)}"
 bash "$SCRIPT_DIR/$phase.sh" || fail "gate '$phase' failed — not advancing"
 
 ts=$(now_iso)
+
+# An iteration costs budget the first time autopilot carries any of its phases.
+# Charging at 'design' would miss the case where the user hands over mid-cycle.
+if [ "$auto_advance" -eq 1 ] && [ -n "$iter" ]; then
+  autopilot_claim_iteration "$iter"
+fi
 
 # --- decide where we go next -------------------------------------------------
 # 'plan' opens the iteration cycle; 'verify' either loops back to design for the
@@ -91,10 +108,13 @@ GATE_NAME="$phase" write_audit <<EOF
 - **at**: $ts
 ${iter:+- **iteration**: $iter}
 - **next**: ${next}${next_iter:+ ($next_iter)}
+- **approved by**: $([ "$auto_advance" -eq 1 ] \
+    && echo "autopilot($(autopilot_field enabled_by)) — expires $(autopilot_field expires_at), $(autopilot_field iterations_used)/$(autopilot_field max_iterations) iterations used" \
+    || echo "user")
 
 ## Signed-off artifacts at transition
 
-$(yq -o=json '.signed_off_artifacts' "$STATUS_FILE" | jq -r '.[]? | "- \(.path) (sha256 \(.sha256[0:12])…, by \(.by), at \(.at))"')
+$(yq -o=json '.signed_off_artifacts' "$STATUS_FILE" | jq -r '.[]? | "- \(.path) (sha256 \(.sha256[0:12])…, by \(.by), at \(.at))\(if .auto then " [AUTO]" else "" end)"')
 EOF
 
 if [ -n "$iter" ]; then

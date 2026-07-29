@@ -50,6 +50,45 @@ now_iso() {
   date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
+now_epoch() {
+  date -u +%s
+}
+
+# GNU and BSD date disagree on how to format an epoch; try both, like the
+# sha256sum/shasum split above.
+epoch_to_iso() {
+  local epoch="$1"
+  date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ
+}
+
+iso_to_epoch() {
+  local iso="$1"
+  date -u -d "$iso" +%s 2>/dev/null \
+    || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null
+}
+
+iso_in_seconds() {
+  epoch_to_iso "$(( $(now_epoch) + $1 ))"
+}
+
+# "45m" / "8h" / "2d" / bare seconds -> seconds. Non-zero exit on garbage.
+duration_to_seconds() {
+  local spec="$1" num unit
+  num="${spec%[smhd]}"
+  unit="${spec#"$num"}"
+  case "$num" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  case "$unit" in
+    ''|s) echo "$num" ;;
+    m)    echo $(( num * 60 )) ;;
+    h)    echo $(( num * 3600 )) ;;
+    d)    echo $(( num * 86400 )) ;;
+    *)    return 1 ;;
+  esac
+}
+
 sha256_of() {
   local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -196,7 +235,92 @@ require_signed_off() {
     || fail "$rel was modified after sign-off (hash mismatch) — re-request approval, then user re-runs: bash gates/signoff.sh $rel"
 }
 
-# --- mutations below: ONLY for signoff.sh / advance.sh, never for gates ---
+# --- autopilot ---------------------------------------------------------------
+#
+# Auto-approve, deliberately narrow: only the iteration cycle, only while it has
+# wall-clock time and iteration budget left. Everything here is a pure read;
+# autopilot.sh does the writing, advance.sh spends the budget.
+
+AUTOPILOT_PHASES="design implement verify"
+
+autopilot_field() {
+  yq ".autopilot.$1" "$STATUS_FILE" 2>/dev/null
+}
+
+autopilot_phase_in_scope() {
+  case " $AUTOPILOT_PHASES " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prints the reason it is NOT usable, and returns non-zero. Silent + zero when
+# it is. Callers use the reason verbatim in their messages.
+autopilot_enabled_and_valid() {
+  local enabled expires_at used maxi now exp
+  enabled=$(autopilot_field enabled)
+  if [ "$enabled" != "true" ]; then
+    echo "autopilot is off"
+    return 1
+  fi
+
+  expires_at=$(autopilot_field expires_at)
+  if [ -n "$expires_at" ] && [ "$expires_at" != "null" ]; then
+    now=$(now_epoch)
+    exp=$(iso_to_epoch "$expires_at" || echo "")
+    if [ -z "$exp" ]; then
+      echo "autopilot has an unreadable expires_at ($expires_at)"
+      return 1
+    fi
+    if [ "$now" -ge "$exp" ]; then
+      echo "autopilot expired at $expires_at"
+      return 1
+    fi
+  fi
+
+  used=$(autopilot_field iterations_used)
+  maxi=$(autopilot_field max_iterations)
+  case "$used" in ''|null|*[!0-9]*) used=0 ;; esac
+  case "$maxi" in ''|null|*[!0-9]*) maxi=0 ;; esac
+  if [ "$used" -ge "$maxi" ]; then
+    echo "autopilot used its budget of $maxi iteration(s)"
+    return 1
+  fi
+
+  return 0
+}
+
+# Is autopilot usable for THIS phase right now?
+autopilot_active_for() {
+  local phase="$1"
+  autopilot_phase_in_scope "$phase" || return 1
+  autopilot_enabled_and_valid >/dev/null 2>&1
+}
+
+# Has this iteration already been charged against the budget?
+autopilot_iteration_claimed() {
+  local iter="$1"
+  [ "$(yq ".autopilot.iterations_claimed[]? | select(. == \"$iter\")" "$STATUS_FILE" 2>/dev/null | head -1)" = "$iter" ]
+}
+
+print_autopilot_status() {
+  local reason
+  if reason=$(autopilot_enabled_and_valid); then
+    :
+  fi
+  if autopilot_enabled_and_valid >/dev/null 2>&1; then
+    echo "autopilot: ON"
+  else
+    echo "autopilot: OFF ($reason)"
+  fi
+  echo "  scope:              ${AUTOPILOT_PHASES// /, } (iteration cycle only)"
+  echo "  expires_at:         $(autopilot_field expires_at)"
+  echo "  iterations_used:    $(autopilot_field iterations_used) / $(autopilot_field max_iterations)"
+  echo "  iterations_claimed: $(yq -o=json '.autopilot.iterations_claimed // []' "$STATUS_FILE" | jq -r 'join(", ") | if . == "" then "-" else . end')"
+  echo "  enabled_by:         $(autopilot_field enabled_by)"
+}
+
+# --- mutations below: ONLY for signoff.sh / advance.sh / autopilot.sh ---
 
 set_status() {
   local phase="$1"
@@ -239,6 +363,17 @@ set_iteration_status() {
       yq -i ".iterations.\"${iter}\".${phase}.${key} = \"${value}\"" "$STATUS_FILE"
       ;;
   esac
+  yq -i ".last_updated = \"$(now_iso)\"" "$STATUS_FILE"
+}
+
+autopilot_claim_iteration() {
+  local iter="$1" used
+  autopilot_iteration_claimed "$iter" && return 0
+  used=$(autopilot_field iterations_used)
+  case "$used" in ''|null|*[!0-9]*) used=0 ;; esac
+  export AP_ITER="$iter"
+  yq -i '.autopilot.iterations_claimed += [strenv(AP_ITER)]' "$STATUS_FILE"
+  yq -i ".autopilot.iterations_used = $(( used + 1 ))" "$STATUS_FILE"
   yq -i ".last_updated = \"$(now_iso)\"" "$STATUS_FILE"
 }
 

@@ -6,6 +6,20 @@ last_updated: null
 # ONLY by gates/signoff.sh (run by the user). Gates verify sha256 against the
 # file's current content; editing after sign-off invalidates the entry.
 signed_off_artifacts: []
+# Auto-approve for the iteration cycle. Written ONLY by gates/autopilot.sh
+# (run by the user, interactive terminal required) and by advance.sh spending
+# the iteration budget. Out of scope by design: discover, architect, model,
+# plan, release — those always need a human sign-off.
+autopilot:
+  enabled: false
+  scope: iteration_cycle
+  enabled_by: null
+  enabled_at: null
+  expires_at: null
+  max_iterations: 0
+  iterations_used: 0
+  iterations_claimed: []
+  disabled_at: null
 phases:
   discover:
     gate_passed: false

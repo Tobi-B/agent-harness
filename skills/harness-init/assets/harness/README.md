@@ -38,6 +38,23 @@ iteration listed in `docs/plan.md`. `advance.sh verify` either loops back to
 5. Advance: `bash gates/advance.sh <phase>` — runs the gate, writes the audit,
    updates `status.yaml`, moves to the next phase or iteration.
 
+## Autopilot (optional)
+
+Once the plan is approved, you can let the agent run the routine part alone:
+
+```bash
+bash gates/autopilot.sh on --expires 8h --max-iterations 3
+bash gates/autopilot.sh status     # exit 0 = on
+bash gates/autopilot.sh off
+```
+
+It covers `design → implement → verify` only, and expires on both wall clock and
+iteration count. `discover`, `architect`, `model`, `plan` and `release` always
+stop for you — that is where the irreversible decisions are. Auto-approvals are
+recorded as `by: autopilot(<you>), auto: true`, so the registry always shows what
+a human actually read. Gates still have to pass; autopilot changes who approves,
+not what is checked. See `docs/adrs/meta-0003-bounded-autopilot.md`.
+
 ## Install into another project
 
 ```bash
@@ -64,6 +81,7 @@ harness — see `tools/sync-skill.sh` in the source repo.
 | `gates/<phase>.sh` | Pure phase checks — no state mutation. |
 | `gates/signoff.sh` | **User-run**: records artifact sign-off (sha256) in `status.yaml`. |
 | `gates/advance.sh` | **User-run**: gate + audit + status update + phase/iteration transition. |
+| `gates/autopilot.sh` | **User-run**: bounded auto-approve for the iteration cycle. |
 | `init.sh` | Install the harness into another project. |
 | `tests/gates/test_gates.sh` | Self-tests for the gates themselves. |
 | `audit/*.md` | Phase audit trail, written by `advance.sh`. |

@@ -1,4 +1,4 @@
-version: 3
+version: 4
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
@@ -209,6 +209,7 @@ agent:
   loop: interview -> draft -> render -> user_signs_off -> run_gate -> user_advances
   sign_off_tool: gates/signoff.sh   # run by the USER; records path+sha256 in status.yaml
   advance_tool: gates/advance.sh    # run by the USER; agent may run it only with --yes on explicit instruction
+  autopilot_tool: gates/autopilot.sh  # run by the USER (interactive terminal required)
   render_tool: ~/.claude/skills/mermaid-render/render.sh
   user_in_the_loop_required_for:
     - phase_transitions
@@ -216,6 +217,16 @@ agent:
     - iteration_designs
     - changes_to_signed_off_artifacts
     - exceptions_to_hardcaps
+
+# Auto-approve, enabled by the user, for routine delivery work only. See
+# docs/adrs/meta-0003-bounded-autopilot.md.
+autopilot:
+  scope: [design, implement, verify]   # fixed in gates/_lib.sh, not configurable
+  never: [discover, architect, model, plan, release]
+  enable: gates/autopilot.sh on [--expires 8h] [--max-iterations 3]
+  disable: gates/autopilot.sh off
+  bounded_by: [expires_at, max_iterations]
+  auto_signoff_marks: "by: autopilot(<user>), auto: true"
   status_file: status.yaml
   audit_dir: audit/
 
