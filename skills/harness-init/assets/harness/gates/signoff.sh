@@ -65,7 +65,8 @@ ts=$(now_iso)
 
 yq -i "del(.signed_off_artifacts[] | select(.path == \"$rel\"))" "$STATUS_FILE"
 export SIGNOFF_PATH="$rel" SIGNOFF_HASH="$hash" SIGNOFF_BY="$by" SIGNOFF_AT="$ts"
-export SIGNOFF_AUTO=$([ "$auto" -eq 1 ] && echo true || echo false)
+if [ "$auto" -eq 1 ]; then SIGNOFF_AUTO=true; else SIGNOFF_AUTO=false; fi
+export SIGNOFF_AUTO
 yq -i '.signed_off_artifacts += [{
   "path": strenv(SIGNOFF_PATH),
   "sha256": strenv(SIGNOFF_HASH),

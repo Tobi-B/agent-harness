@@ -362,6 +362,7 @@ t_fails "auto sign-off refuses a non-iteration artifact" \
   bash "$GATES_DIR/signoff.sh" docs/prd.md --auto
 
 # Budget: charged once per iteration, no matter how many phases it carries.
+# shellcheck source=../../gates/_lib.sh
 . "$GATES_DIR/_lib.sh"
 t "budget charges an iteration once" bash -c "
   . '$GATES_DIR/_lib.sh'
