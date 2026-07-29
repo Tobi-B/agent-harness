@@ -18,7 +18,25 @@ jobs:
           yq --version
 
       - name: shellcheck
-        run: shellcheck -x harness_v0/gates/*.sh harness_v0/tests/gates/*.sh
+        run: |
+          shellcheck -x harness/gates/*.sh harness/init.sh harness/tests/gates/*.sh \
+                        tools/*.sh skills/mermaid-render/render.sh
 
       - name: Gate self-tests
-        run: bash harness_v0/tests/gates/test_gates.sh
+        run: bash harness/tests/gates/test_gates.sh
+
+      - name: Scaffold into a clean project and self-test there
+        run: |
+          bash harness/init.sh /tmp/scaffold-check --name ci-demo --no-git
+          test ! -e /tmp/scaffold-check/harness/docs/user_stories/US-001*.md
+          test "$(yq '.signed_off_artifacts | length' /tmp/scaffold-check/harness/status.yaml)" = "0"
+          test "$(yq '.current_phase' /tmp/scaffold-check/harness/status.yaml)" = "discover"
+          bash /tmp/scaffold-check/harness/tests/gates/test_gates.sh
+
+      - name: Skill assets in sync with repo
+        run: bash tools/sync-skill.sh --check
+
+      - name: Scaffold from the skill's bundled copy
+        run: |
+          bash skills/harness-init/assets/harness/init.sh /tmp/skill-check --name skill-demo --no-git
+          bash /tmp/skill-check/harness/tests/gates/test_gates.sh

@@ -1,0 +1,230 @@
+version: 3
+name: lean-harness
+
+# Contract: every criterion listed under a phase's `gate:` block is enforced
+# by the referenced script. Do not list criteria here that no script checks.
+# Gates are pure checks; state transitions happen only via gates/advance.sh,
+# sign-offs only via gates/signoff.sh (run by the user).
+#
+# Shape:
+#   discover → architect → model → plan → ⟳(design → implement → verify) → release
+#
+# `scope: iteration` phases run once per iteration listed in docs/plan.md and
+# record their gate state under `iterations.<ITER-NN>` in status.yaml.
+
+phases:
+  - id: discover
+    scope: once
+    goal: Extract user stories from a problem statement.
+    dor_ref: dor_dod.yaml#discover.definition_of_ready
+    agent_actions:
+      - interview_user_for_role_want_so_that
+      - draft_user_story_per_acceptance_criterion
+      - write_gherkin_feature_per_story
+      - request_user_signoff_per_story
+    produces:
+      - docs/user_stories/US-*.md
+      - tests/features/US-*.feature
+    gate:
+      run: gates/discover.sh
+      checks:
+        - prd_has_goals_nfrs_success_criteria_with_checkboxes
+        - story_count_within_hardcap
+        - each_story_has_id_references_role_want_so_that_acceptance_criteria
+        - each_story_has_1to1_feature_file
+        - story_and_feature_signed_off_with_matching_hash
+    audit: audit/discover-*.md
+    next: architect
+
+  - id: architect
+    scope: once
+    goal: Make load-bearing architecture decisions (max 3 ADRs).
+    dor_ref: dor_dod.yaml#architect.definition_of_ready
+    agent_actions:
+      - propose_pattern_options_for_each_decision
+      - draft_madr_adr_with_options_and_tradeoffs
+      - request_user_decision_per_adr
+      - commit_adr_on_user_signoff
+    produces:
+      - docs/adrs/000*.md
+      - docs/architecture.md
+    gate:
+      run: gates/architect.sh
+      checks:
+        - discover_gate_passed
+        - adr_count_within_hardcap
+        - each_adr_has_id_status_accepted_madr_sections
+        - each_adr_signed_off_with_matching_hash
+        - architecture_md_has_c4_levels_and_cross_cutting_concerns
+    audit: audit/architect-*.md
+    next: model
+
+  - id: model
+    scope: once
+    goal: Derive system-level C4 + sequence + state UML diagrams from PRD and ADRs.
+    dor_ref: dor_dod.yaml#model.definition_of_ready
+    agent_actions:
+      - generate_c4_context_diagram
+      - generate_c4_container_diagram
+      - generate_c4_component_diagram
+      - generate_sequence_diagram_per_key_flow
+      - generate_state_diagram_per_lifecycle
+      - add_traceability_frontmatter_to_each_diagram
+      - link_diagrams_from_architecture_md
+      - render_diagrams_to_html_for_user_review
+    produces:
+      - docs/uml/c4-context.mmd
+      - docs/uml/c4-container.mmd
+      - docs/uml/c4-component.mmd
+      - docs/uml/c4-code-*.mmd
+      - docs/uml/sequence-*.mmd
+      - docs/uml/state-*.mmd
+    gate:
+      run: gates/model.sh
+      checks:
+        - architect_gate_passed
+        - c4_context_container_component_diagrams_exist
+        - at_least_one_sequence_and_one_state_diagram
+        - every_diagram_sources_line_references_upstream_artifact
+        - architecture_md_links_all_c4_diagrams
+    audit: audit/model-*.md
+    next: plan
+
+  - id: plan
+    scope: once
+    goal: Slice the signed-off stories into small vertical iterations.
+    dor_ref: dor_dod.yaml#plan.definition_of_ready
+    agent_actions:
+      - group_stories_into_vertically_sliced_iterations
+      - write_plan_md_with_iteration_frontmatter
+      - request_user_signoff_on_plan
+    produces:
+      - docs/plan.md
+    gate:
+      run: gates/plan.sh
+      checks:
+        - model_gate_passed
+        - plan_frontmatter_lists_iterations_with_id_goal_stories
+        - iteration_ids_match_ITER_NN_and_are_unique
+        - iteration_count_within_hardcap
+        - every_referenced_story_exists
+        - every_story_is_covered_by_some_iteration
+        - plan_signed_off_with_matching_hash
+    audit: audit/plan-*.md
+    next: design
+
+  - id: design
+    scope: iteration
+    goal: Design the current iteration — visually — and get it approved before code.
+    dor_ref: dor_dod.yaml#design.definition_of_ready
+    agent_actions:
+      - propose_patterns_and_approach_for_this_iteration
+      - draw_mermaid_uml_for_the_change
+      - render_design_to_html_via_mermaid_render_skill
+      - show_rendered_page_to_user
+      - request_user_signoff_on_iteration_design
+    produces:
+      - docs/iterations/ITER-*.md
+      - docs/iterations/ITER-*.html
+    gate:
+      run: gates/design.sh
+      checks:
+        - plan_gate_passed
+        - iteration_file_has_goal_approach_components_test_strategy
+        - iteration_file_contains_at_least_one_mermaid_diagram
+        - iteration_file_references_all_its_planned_stories
+        - rendered_html_exists_and_is_not_stale
+        - iteration_design_signed_off_with_matching_hash
+    audit: audit/design-*.md
+    next: implement
+
+  - id: implement
+    scope: iteration
+    goal: Implement the approved design, TDD per story.
+    dor_ref: dor_dod.yaml#implement.definition_of_ready
+    agent_actions:
+      - write_failing_test_per_acceptance_criterion
+      - implement_minimum_to_pass
+      - run_tests_and_lint
+      - use_idempotency_keys_per_architecture_md   # convention; reviewed, not machine-checked
+    produces:
+      - src/**
+      - tests/**
+    gate:
+      run: gates/implement.sh
+      checks:
+        - iteration_design_gate_passed
+        - every_iteration_story_has_a_feature_file
+        - pytest_passes_when_src_exists
+        - ruff_clean_when_src_exists
+        - no_todo_fixme_in_src
+        - behave_passes_on_feature_files
+        - missing_tools_fail_gate_unless_explicitly_allowed
+    audit: audit/implement-*.md
+    next: verify
+
+  - id: verify
+    scope: iteration
+    goal: Confirm this iteration delivered what its design promised.
+    dor_ref: dor_dod.yaml#verify.definition_of_ready
+    agent_actions:
+      - run_acceptance_tests_for_this_iterations_stories
+      - record_results_in_iteration_file
+      - check_off_verified_acceptance_items
+    produces:
+      - docs/iterations/ITER-*.md   # '## Verification' section
+    gate:
+      run: gates/verify.sh
+      checks:
+        - iteration_implement_gate_passed
+        - iteration_file_has_verification_section
+        - verification_section_reports_on_every_iteration_story
+        - no_unchecked_items_under_verification
+    audit: audit/verify-*.md
+    next: design                      # loop back for the next iteration
+    next_when_iterations_done: release
+
+  - id: release
+    scope: once
+    goal: Close the project against the PRD success criteria and NFRs.
+    dor_ref: dor_dod.yaml#release.definition_of_ready
+    agent_actions:
+      - measure_nfr_targets
+      - compare_results_to_prd_success_criteria
+      - write_verification_report
+      - short_retro_for_next_cycle
+    produces:
+      - docs/verify-report.md
+    gate:
+      run: gates/release.sh
+      checks:
+        - discover_architect_model_plan_gates_passed
+        - every_planned_iteration_passed_design_implement_verify
+        - all_prd_checkbox_criteria_checked_off
+        - verify_report_has_result_success_criteria_nfr_sections
+    audit: audit/release-*.md
+    next: null
+
+agent:
+  loop: interview -> draft -> render -> user_signs_off -> run_gate -> user_advances
+  sign_off_tool: gates/signoff.sh   # run by the USER; records path+sha256 in status.yaml
+  advance_tool: gates/advance.sh    # run by the USER; agent may run it only with --yes on explicit instruction
+  render_tool: ~/.claude/skills/mermaid-render/render.sh
+  user_in_the_loop_required_for:
+    - phase_transitions
+    - adr_decisions
+    - iteration_designs
+    - changes_to_signed_off_artifacts
+    - exceptions_to_hardcaps
+  status_file: status.yaml
+  audit_dir: audit/
+
+hardcaps:
+  max_adrs_v0: 3
+  max_user_stories_per_discover_run: 20
+  max_iterations: 12
+  max_concurrent_stories_in_implement: 1
+
+meta_loop:
+  process: docs/WORKFLOW_CHANGES.md
+  requires: [user_signoff, version_bump_in_workflow_yaml]

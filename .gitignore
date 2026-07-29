@@ -53,3 +53,6 @@ Thumbs.db
 
 # Scaffolder output (init creates new project here; ignore accidentally inited subfolders)
 agent_harness_new_project/
+# Claude Code local machine-specific settings
+.claude/settings.local.json
+skills/harness-init/assets/harness/audit/

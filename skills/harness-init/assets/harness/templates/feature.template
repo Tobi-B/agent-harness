@@ -1,0 +1,25 @@
+@US-001
+Feature: <Story Title>
+
+  As a <role>
+  I want <want>
+  So that <so that>
+
+  Background:
+    Given the system is in its initial state
+
+  Scenario: <Acceptance Criterion 1, verbatim from the story>
+    Given <precondition>
+    When <action>
+    Then <expected outcome>
+    And <additional expectation>
+
+  Scenario: <Acceptance Criterion 2>
+    Given <precondition>
+    When <action>
+    Then <expected outcome>
+
+  Scenario: <Acceptance Criterion 3>
+    Given <precondition>
+    When <action>
+    Then <expected outcome>

@@ -1,0 +1,33 @@
+version: 3
+current_phase: discover
+current_iteration: null
+last_updated: null
+# Sign-off registry — the single authority on approvals. Entries are written
+# ONLY by gates/signoff.sh (run by the user). Gates verify sha256 against the
+# file's current content; editing after sign-off invalidates the entry.
+signed_off_artifacts: []
+phases:
+  discover:
+    gate_passed: false
+    started_at: null
+    completed_at: null
+  architect:
+    gate_passed: false
+    started_at: null
+    completed_at: null
+  model:
+    gate_passed: false
+    started_at: null
+    completed_at: null
+  plan:
+    gate_passed: false
+    started_at: null
+    completed_at: null
+  release:
+    gate_passed: false
+    started_at: null
+    completed_at: null
+# Per-iteration gate state, keyed by the ITER-NN ids from docs/plan.md.
+# Written by gates/advance.sh; docs/plan.md stays the source of truth for
+# what the iterations ARE.
+iterations: {}

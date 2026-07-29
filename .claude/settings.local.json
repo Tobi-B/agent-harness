@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(winget install --id koalaman.shellcheck --accept-source-agreements --accept-package-agreements --silent)"
-    ]
-  }
-}
