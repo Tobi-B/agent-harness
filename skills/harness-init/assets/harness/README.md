@@ -32,7 +32,7 @@ iteration listed in `docs/plan.md`. `advance.sh verify` either loops back to
 ## How to run
 
 1. Fill `docs/prd.md` (Goals, Success Criteria, NFRs — the gate checks them).
-2. Run `/loop` and work one phase at a time.
+2. Run `/harness` and work one phase at a time.
 3. Approve artifacts yourself: `bash gates/signoff.sh <path>`.
 4. Check any phase anytime: `bash gates/<phase>.sh` (pure, CI-safe).
 5. Advance: `bash gates/advance.sh <phase>` — runs the gate, writes the audit,

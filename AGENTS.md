@@ -3,7 +3,7 @@
 This repo uses the **lean harness** workflow. The contract lives in
 `harness/workflow.yaml`. This file is the portable summary that any agent
 (opencode, Aider, Cursor, Copilot, Continue, …) can read without tool-specific
-setup. Claude Code and opencode also have a `/loop` command.
+setup. Claude Code and opencode also have a `/harness` command.
 
 ## Quick Start
 

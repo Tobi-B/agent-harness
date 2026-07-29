@@ -88,8 +88,8 @@ cp "$SRC_ROOT/status.yaml" "$target/harness/status.yaml"
 
 # --- agent glue ---------------------------------------------------------------
 mkdir -p "$target/.claude/commands" "$target/.opencode/command"
-cp "$REPO_ROOT/.claude/commands/loop.md"   "$target/.claude/commands/"
-cp "$REPO_ROOT/.opencode/command/loop.md"  "$target/.opencode/command/"
+cp "$REPO_ROOT/.claude/commands/harness.md"   "$target/.claude/commands/"
+cp "$REPO_ROOT/.opencode/command/harness.md"  "$target/.opencode/command/"
 cp "$REPO_ROOT/.shellcheckrc"              "$target/.shellcheckrc"
 
 if [ -f "$target/AGENTS.md" ]; then
@@ -131,7 +131,7 @@ cat <<EOF
 
 harness installed in $target
 
-  next: open the project and run /loop  (or: bash harness/gates/discover.sh)
+  next: open the project and run /harness  (or: bash harness/gates/discover.sh)
 
   state:    harness/status.yaml       (phase: discover, no sign-offs yet)
   contract: harness/workflow.yaml

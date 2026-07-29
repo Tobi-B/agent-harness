@@ -18,8 +18,8 @@ PAYLOAD=(
   harness
   AGENTS.md
   .shellcheckrc
-  .claude/commands/loop.md
-  .opencode/command/loop.md
+  .claude/commands/harness.md
+  .opencode/command/harness.md
 )
 
 check_only=0

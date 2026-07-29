@@ -14,7 +14,7 @@ description: |
 # Harness Init
 
 Installs the harness and starts its git-based state loop. After install, all
-day-to-day work runs through `/loop`.
+day-to-day work runs through `/harness`.
 
 ## What makes this harness different
 
@@ -50,7 +50,7 @@ it is the point.
    Verify with `bash <TARGET>/harness/tests/gates/test_gates.sh` — the harness
    self-tests its own gates. If they pass, the install is sound.
 
-4. **Hand off.** Tell the user the harness is ready and that `/loop` starts the
+4. **Hand off.** Tell the user the harness is ready and that `/harness` starts the
    `discover` phase. If they already described their project in this
    conversation, offer to begin the interview right away rather than making
    them repeat themselves.
