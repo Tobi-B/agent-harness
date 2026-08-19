@@ -1,10 +1,11 @@
-version: 4
+version: 6
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
 # by the referenced script. Do not list criteria here that no script checks.
-# Gates are pure checks; state transitions happen only via gates/advance.sh,
-# sign-offs only via gates/signoff.sh (run by the user).
+# Gates are pure checks; state transitions happen only via gates/advance.sh.
+# Approvals are `approved_by:` markers inside the artifacts, written by the
+# agent only after the user approved in conversation — no hashes, no registry.
 #
 # Shape:
 #   discover → architect → model → plan → ⟳(design → implement → verify) → release
@@ -21,7 +22,8 @@ phases:
       - interview_user_for_role_want_so_that
       - draft_user_story_per_acceptance_criterion
       - write_gherkin_feature_per_story
-      - request_user_signoff_per_story
+      - request_user_approval_per_story
+      - mark_approved_by_after_user_approves
     produces:
       - docs/user_stories/US-*.md
       - tests/features/US-*.feature
@@ -32,7 +34,7 @@ phases:
         - story_count_within_hardcap
         - each_story_has_id_references_role_want_so_that_acceptance_criteria
         - each_story_has_1to1_feature_file
-        - story_and_feature_signed_off_with_matching_hash
+        - story_and_feature_carry_approved_by_marker
     audit: audit/discover-*.md
     next: architect
 
@@ -44,7 +46,7 @@ phases:
       - propose_pattern_options_for_each_decision
       - draft_madr_adr_with_options_and_tradeoffs
       - request_user_decision_per_adr
-      - commit_adr_on_user_signoff
+      - commit_adr_on_user_approval
     produces:
       - docs/adrs/000*.md
       - docs/architecture.md
@@ -54,7 +56,7 @@ phases:
         - discover_gate_passed
         - adr_count_within_hardcap
         - each_adr_has_id_status_accepted_madr_sections
-        - each_adr_signed_off_with_matching_hash
+        - each_adr_carries_approved_by_marker
         - architecture_md_has_c4_levels_and_cross_cutting_concerns
     audit: audit/architect-*.md
     next: model
@@ -92,12 +94,12 @@ phases:
 
   - id: plan
     scope: once
-    goal: Slice the signed-off stories into small vertical iterations.
+    goal: Slice the approved stories into small vertical iterations.
     dor_ref: dor_dod.yaml#plan.definition_of_ready
     agent_actions:
       - group_stories_into_vertically_sliced_iterations
       - write_plan_md_with_iteration_frontmatter
-      - request_user_signoff_on_plan
+      - request_user_approval_on_plan
     produces:
       - docs/plan.md
     gate:
@@ -109,7 +111,7 @@ phases:
         - iteration_count_within_hardcap
         - every_referenced_story_exists
         - every_story_is_covered_by_some_iteration
-        - plan_signed_off_with_matching_hash
+        - plan_carries_approved_by_marker
     audit: audit/plan-*.md
     next: design
 
@@ -122,7 +124,7 @@ phases:
       - draw_mermaid_uml_for_the_change
       - render_design_to_html_via_mermaid_render_skill
       - show_rendered_page_to_user
-      - request_user_signoff_on_iteration_design
+      - request_user_approval_on_iteration_design
     produces:
       - docs/iterations/ITER-*.md
       - docs/iterations/ITER-*.html
@@ -133,8 +135,8 @@ phases:
         - iteration_file_has_goal_approach_components_test_strategy
         - iteration_file_contains_at_least_one_mermaid_diagram
         - iteration_file_references_all_its_planned_stories
-        - rendered_html_exists_and_is_not_stale
-        - iteration_design_signed_off_with_matching_hash
+        - rendered_html_exists_and_is_not_older_than_source
+        - iteration_design_carries_approved_by_marker
     audit: audit/design-*.md
     next: implement
 
@@ -206,27 +208,29 @@ phases:
     next: null
 
 agent:
-  loop: interview -> draft -> render -> user_signs_off -> run_gate -> user_advances
-  sign_off_tool: gates/signoff.sh   # run by the USER; records path+sha256 in status.yaml
+  loop: interview -> draft -> render -> user_approves_in_chat -> agent_marks_approved_by -> run_gate -> user_advances
+  approval_marker: "approved_by: <who>"   # frontmatter in .md, '# approved_by:' comment in .feature — written by the agent ONLY after the user approved in conversation
   advance_tool: gates/advance.sh    # run by the USER; agent may run it only with --yes on explicit instruction
-  autopilot_tool: gates/autopilot.sh  # run by the USER (interactive terminal required)
+  autopilot_tool: gates/autopilot.sh  # agent runs it ONLY on the user's explicit chat instruction
   render_tool: ~/.claude/skills/mermaid-render/render.sh
   user_in_the_loop_required_for:
     - phase_transitions
     - adr_decisions
     - iteration_designs
-    - changes_to_signed_off_artifacts
+    - material_changes_to_approved_artifacts   # re-ask, then refresh the marker
     - exceptions_to_hardcaps
 
-# Auto-approve, enabled by the user, for routine delivery work only. See
-# docs/adrs/meta-0003-bounded-autopilot.md.
+# Auto mode: off = human-in-the-loop development cycle, on = no human in the
+# loop until it expires — except release, which always waits. Enabled on the
+# user's explicit chat instruction. See docs/adrs/meta-0003-bounded-autopilot.md
+# and docs/adrs/meta-0005-full-autopilot-except-release.md.
 autopilot:
-  scope: [design, implement, verify]   # fixed in gates/_lib.sh, not configurable
-  never: [discover, architect, model, plan, release]
-  enable: gates/autopilot.sh on [--expires 8h] [--max-iterations 3]
+  scope: [discover, architect, model, plan, design, implement, verify]   # fixed in gates/_lib.sh, not configurable
+  never: [release]
+  enable: gates/autopilot.sh on [--expires 8h] [--max-iterations 3]   # agent runs it only on explicit user instruction
   disable: gates/autopilot.sh off
   bounded_by: [expires_at, max_iterations]
-  auto_signoff_marks: "by: autopilot(<user>), auto: true"
+  auto_approval_marks: "approved_by: autopilot"
   status_file: status.yaml
   audit_dir: audit/
 
@@ -238,4 +242,4 @@ hardcaps:
 
 meta_loop:
   process: docs/WORKFLOW_CHANGES.md
-  requires: [user_signoff, version_bump_in_workflow_yaml]
+  requires: [user_approval, version_bump_in_workflow_yaml]

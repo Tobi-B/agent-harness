@@ -61,6 +61,9 @@ cp -r "$SRC_ROOT/gates"     "$target/harness/"
 cp -r "$SRC_ROOT/templates" "$target/harness/"
 cp    "$SRC_ROOT/workflow.yaml" "$SRC_ROOT/dor_dod.yaml" "$SRC_ROOT/README.md" "$target/harness/"
 cp    "$SRC_ROOT/init.sh"   "$target/harness/"
+if [ -d "$SRC_ROOT/glue" ]; then
+  cp -r "$SRC_ROOT/glue" "$target/harness/"
+fi
 
 # --- gate self-tests travel with the harness ---------------------------------
 mkdir -p "$target/harness/tests/gates" "$target/harness/tests/features"
@@ -83,14 +86,28 @@ for d in docs/adrs docs/uml docs/user_stories docs/iterations audit tests/featur
     || touch "$target/harness/$d/.gitkeep"
 done
 
-# --- fresh state: no phases passed, no sign-offs, no iterations --------------
+# --- fresh state: no phases passed, no approvals, no iterations --------------
 cp "$SRC_ROOT/status.yaml" "$target/harness/status.yaml"
 
 # --- agent glue ---------------------------------------------------------------
+# Canonical copies live VISIBLY in glue/ — hidden dirs get stripped by some
+# skill packagings, so the hidden layout of a source repo is only a fallback.
+# A missing file degrades the install (no /harness command) but must not
+# abort it.
 mkdir -p "$target/.claude/commands" "$target/.opencode/command"
-cp "$REPO_ROOT/.claude/commands/harness.md"   "$target/.claude/commands/"
-cp "$REPO_ROOT/.opencode/command/harness.md"  "$target/.opencode/command/"
-cp "$REPO_ROOT/.shellcheckrc"              "$target/.shellcheckrc"
+install_glue() {
+  local visible="$1" hidden="$2"
+  if [ -f "$SRC_ROOT/glue/$visible" ]; then
+    cp "$SRC_ROOT/glue/$visible" "$target/$hidden"
+  elif [ -f "$REPO_ROOT/$hidden" ]; then
+    cp "$REPO_ROOT/$hidden" "$target/$hidden"
+  else
+    echo "WARN: $hidden not found (no glue/$visible either) — skipped (agent glue, optional)"
+  fi
+}
+install_glue claude-command-harness.md   .claude/commands/harness.md
+install_glue opencode-command-harness.md .opencode/command/harness.md
+install_glue shellcheckrc                .shellcheckrc
 
 if [ -f "$target/AGENTS.md" ]; then
   echo "WARN: $target/AGENTS.md exists — wrote AGENTS.harness.md instead; merge it manually"
@@ -122,7 +139,7 @@ EOF
     git -C "$target" commit -q -m "chore: scaffold lean harness
 
 Phase machine: discover → architect → model → plan → ⟳(design → implement → verify) → release
-Gates are pure checks; sign-off and phase transitions are user actions."
+Gates are pure checks; approval and phase transitions belong to the user."
     echo "INFO: initial commit created"
   fi
 fi
@@ -133,10 +150,11 @@ harness installed in $target
 
   next: open the project and run /harness  (or: bash harness/gates/discover.sh)
 
-  state:    harness/status.yaml       (phase: discover, no sign-offs yet)
+  state:    harness/status.yaml       (phase: discover, nothing approved yet)
   contract: harness/workflow.yaml
   fill in:  harness/docs/prd.md       — the discover gate checks it
 
-  sign off an artifact:  bash harness/gates/signoff.sh <path>
-  advance a phase:       bash harness/gates/advance.sh <phase>
+  approve an artifact:  say so in chat — the agent then writes
+                        'approved_by: user' into the artifact itself
+  advance a phase:      bash harness/gates/advance.sh <phase>
 EOF

@@ -36,11 +36,13 @@ RENDER_CMD="bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o $ITER
 
 [ -f "$ITER_HTML" ] || fail "missing rendered $ITER_HTML — run: $RENDER_CMD"
 
-# Freshness by content hash, not mtime: filesystem timestamps here compare at
-# whole-second resolution, so a render right after a write looks "not newer".
-grep -qF "$(sha256_of "$ITER_MD")" "$ITER_HTML" \
-  || fail "$ITER_HTML does not match the current $ITER_MD (stale render) — re-run: $RENDER_CMD"
+# Freshness by mtime: the render must not be older than its source. Equal
+# timestamps pass — filesystem seconds-resolution makes a render right after
+# a write look simultaneous, and that is fine.
+if [ "$ITER_MD" -nt "$ITER_HTML" ]; then
+  fail "$ITER_HTML is older than the current $ITER_MD (stale render) — re-run: $RENDER_CMD"
+fi
 
-require_signed_off "$ITER_MD"
+require_approved "$ITER_MD"
 
 pass

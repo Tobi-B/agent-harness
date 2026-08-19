@@ -1,6 +1,6 @@
 ---
 # The iteration list is the machine-readable contract. gates/plan.sh validates
-# it and gates/advance.sh walks it. Every signed-off story must appear in
+# it and gates/advance.sh walks it. Every approved story must appear in
 # exactly one iteration's `stories:` list.
 iterations: []
 # iterations:

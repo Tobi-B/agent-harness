@@ -37,8 +37,8 @@ for story in "${stories[@]}"; do
   feature="$FEATURES_DIR/${base}.feature"
   [ -f "$feature" ] || fail "missing $feature (must be 1:1 with $story)"
 
-  require_signed_off "$story"
-  require_signed_off "$feature"
+  require_approved "$story"
+  require_approved "$feature"
 done
 
 pass

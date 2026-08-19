@@ -29,7 +29,7 @@ for adr in "${adrs[@]}"; do
     grep -qF "$section" "$adr" || fail "$adr missing MADR section: $section"
   done
 
-  require_signed_off "$adr"
+  require_approved "$adr"
 done
 
 [ -f "$ARCH" ] || fail "missing $ARCH"

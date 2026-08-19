@@ -13,13 +13,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSETS="$REPO_ROOT/skills/harness-init/assets"
 
-# Everything init.sh reads, relative to the repo root.
+# Everything init.sh reads, relative to the repo root. The agent glue lives
+# visibly in harness/glue/ and travels inside `harness` — hidden directories
+# get stripped by some skill packagings (see meta-0004/harness/init.sh).
 PAYLOAD=(
   harness
   AGENTS.md
-  .shellcheckrc
-  .claude/commands/harness.md
-  .opencode/command/harness.md
 )
 
 check_only=0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pure check — no state mutation. Advance via gates/advance.sh plan.
 #
-# The plan slices the signed-off stories into iterations. Its frontmatter is the
+# The plan slices the approved stories into iterations. Its frontmatter is the
 # single source of truth for which iterations exist and what each delivers.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,7 +47,7 @@ for id in "${iters[@]}"; do
   done
 done
 
-# Every signed-off story must land in some iteration — otherwise it would be
+# Every approved story must land in some iteration — otherwise it would be
 # specified and approved but never built.
 while read -r story; do
   [ -n "$story" ] || continue
@@ -59,6 +59,6 @@ while read -r story; do
   esac
 done < <(find "$STORIES_DIR" -maxdepth 1 -name 'US-*.md' | sort)
 
-require_signed_off "$PLAN_FILE"
+require_approved "$PLAN_FILE"
 
 pass

@@ -1,0 +1,8 @@
+# Shellcheck config for the harness gates (installed as .shellcheckrc).
+# Run: shellcheck -x gates/*.sh tests/gates/test_gates.sh init.sh
+external-sources=true
+source-path=SCRIPTDIR
+# SC2034: GATE_NAME is consumed by the sourced _lib.sh, not the defining file.
+# SC2015: `[ a ] && [ b ] || fail` is the gates' deliberate assertion idiom —
+#         the middle term is a pure test, so the A-true/B-false edge is intended.
+disable=SC2034,SC2015

@@ -10,6 +10,7 @@ Filename: `US-NNN-short-slug.md`. Frontmatter + body.
 ---
 id: US-001
 status: draft | approved
+approved_by:            # left empty in drafts; the agent writes 'user' after approval in chat
 references:
   - PRD §Goals
   - ADR-0001
@@ -36,6 +37,7 @@ feature: tests/features/US-001-short-slug.feature
 The matching Gherkin feature file:
 
 ```gherkin
+# approved_by:   <- the agent writes '# approved_by: user' after approval in chat
 @US-001
 Feature: <story title>
 
@@ -58,15 +60,15 @@ Feature: <story title>
 
 1. Agent interviews for role / want / so-that per actor.
 2. Agent drafts the story plus the matching `.feature` file with one `Scenario` per Acceptance Criterion (skeleton: `templates/feature.template`).
-3. User signs off **both** files: `bash gates/signoff.sh docs/user_stories/US-NNN-<slug>.md` and `bash gates/signoff.sh tests/features/US-NNN-<slug>.feature`. This records each file's sha256 in `status.yaml` — the registry is the approval authority; the frontmatter `status:` field is informational.
-4. The `discover` gate rejects unsigned stories, missing `.feature` files, and any file edited after sign-off (hash mismatch).
+3. User approves **both** files in conversation. The agent then writes `approved_by: user` into the story's frontmatter and a `# approved_by: user` comment into the `.feature` file — only after, never before, the user actually said so.
+4. The `discover` gate rejects stories or `.feature` files without an `approved_by:` marker, and missing `.feature` files. If a file changes materially after approval, ask the user again before keeping the marker.
 
 ## INDEX
 
-Maintain `INDEX.md` here. One row per story: ID, title, status, feature path, sign-off timestamp.
+Maintain `INDEX.md` here. One row per story: ID, title, status, feature path, approval.
 
 ```markdown
-| ID | Title | Status | Feature | Signed off |
+| ID | Title | Status | Feature | Approved |
 |---|---|---|---|---|
-| US-001 | ... | approved | tests/features/US-001-...feature | 2026-01-15 |
+| US-001 | ... | approved | tests/features/US-001-...feature | user, 2026-01-15 |
 ```

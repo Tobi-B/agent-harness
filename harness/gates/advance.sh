@@ -112,9 +112,12 @@ ${iter:+- **iteration**: $iter}
     && echo "autopilot($(autopilot_field enabled_by)) — expires $(autopilot_field expires_at), $(autopilot_field iterations_used)/$(autopilot_field max_iterations) iterations used" \
     || echo "user")
 
-## Signed-off artifacts at transition
+## Approved artifacts at transition
 
-$(yq -o=json '.signed_off_artifacts' "$STATUS_FILE" | jq -r '.[]? | "- \(.path) (sha256 \(.sha256[0:12])…, by \(.by), at \(.at))\(if .auto then " [AUTO]" else "" end)"')
+$(grep -rlE '^(#[[:space:]]*)?approved_by:' "$DOCS_DIR" "$HARNESS_ROOT/tests/features" 2>/dev/null | sort | while read -r f; do
+    who=$(approved_by_of "$f")
+    [ -n "$who" ] && echo "- $(rel_to_root "$f") (approved by $who)"
+  done)
 EOF
 
 if [ -n "$iter" ]; then

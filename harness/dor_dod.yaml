@@ -1,9 +1,10 @@
-version: 3
+version: 4
 
 # Human checklists. A subset is machine-enforced: each gate checks its
-# predecessor's gate_passed flag in status.yaml, and sign-offs are verified
-# by hash via the registry (see gates/signoff.sh). Items marked (manual)
-# are review items with no automated check.
+# predecessor's gate_passed flag in status.yaml, and approvals are checked
+# as `approved_by:` markers in the artifacts themselves (no hashes — the
+# marker is written by the agent after the user approves in conversation).
+# Items marked (manual) are review items with no automated check.
 
 discover:
   definition_of_ready:
@@ -14,7 +15,7 @@ discover:
     - prd_has_success_criteria
     - user_is_available_for_interview
   definition_of_done:
-    - all_user_stories_signed_off
+    - all_user_stories_approved
     - one_feature_file_per_story
     - traceability_frontmatter_on_each_story
     - status_yaml_phase_discover_completed_true
@@ -22,18 +23,18 @@ discover:
 architect:
   definition_of_ready:
     - discover_gate_passed
-    - all_stories_signed_off
+    - all_stories_approved
   definition_of_done:
     - all_load_bearing_decisions_have_adr
     - adr_count_le_3
-    - all_adrs_signed_off
+    - all_adrs_approved
     - architecture_md_has_c4_levels_and_cross_cutting
     - status_yaml_phase_architect_completed_true
 
 model:
   definition_of_ready:
     - architect_gate_passed
-    - all_adrs_signed_off
+    - all_adrs_approved
   definition_of_done:
     - c4_context_diagram_exists
     - c4_container_diagram_exists
@@ -48,12 +49,12 @@ model:
 plan:
   definition_of_ready:
     - model_gate_passed
-    - all_stories_signed_off
+    - all_stories_approved
   definition_of_done:
     - iterations_are_vertical_slices (manual)
     - every_story_covered_by_some_iteration
     - iteration_frontmatter_matches_table (manual)
-    - plan_signed_off
+    - plan_approved
     - status_yaml_phase_plan_completed_true
 
 design:
@@ -63,9 +64,9 @@ design:
   definition_of_done:
     - iteration_file_has_goal_approach_components_test_strategy
     - at_least_one_mermaid_diagram
-    - rendered_html_up_to_date
+    - rendered_html_not_older_than_source
     - user_actually_looked_at_the_rendered_design (manual)
-    - iteration_design_signed_off
+    - iteration_design_approved
     - iteration_design_gate_passed_true
 
 implement:

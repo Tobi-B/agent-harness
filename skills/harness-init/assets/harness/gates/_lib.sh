@@ -4,8 +4,10 @@
 # Contract: gate scripts (discover.sh, architect.sh, ...) are PURE CHECKS.
 # They read files and exit 0/1 — they never mutate status.yaml or write audits.
 # State changes happen only through:
-#   - gates/signoff.sh  (run by the USER: records artifact sha256 in status.yaml)
-#   - gates/advance.sh  (run by the USER: runs the gate, writes audit, advances phase)
+#   - gates/advance.sh   (run by the USER: runs the gate, writes audit, advances phase)
+#   - gates/autopilot.sh (run by the USER: bounded auto-approve for the iteration cycle)
+# Approvals are plain `approved_by:` markers inside the artifacts themselves,
+# written by the agent only after the user has approved in conversation.
 set -euo pipefail
 
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -16,12 +18,48 @@ AUDIT_DIR="$HARNESS_ROOT/audit"
 DOCS_DIR="$HARNESS_ROOT/docs"
 GATE_NAME="${GATE_NAME:-$(basename "${BASH_SOURCE[1]:-unknown}" .sh)}"
 
+# A terminal opened before yq/jq were installed keeps the PATH it inherited at
+# start, so the tools exist but are invisible. Probe the usual install
+# locations before concluding they are missing.
+_add_to_path() {
+  local dir="$1"
+  # %LOCALAPPDATA% is a native Windows path; without conversion it lands in
+  # PATH drive-less ("\Users\...") and only resolves on the current drive.
+  case "$dir" in
+    *\\*) command -v cygpath >/dev/null 2>&1 && dir="$(cygpath -u "$dir")" ;;
+  esac
+  [ -d "$dir" ] || return 0
+  case ":$PATH:" in
+    *":$dir:"*) ;;
+    *) PATH="$PATH:$dir" ;;
+  esac
+}
+_add_to_path "${LOCALAPPDATA:-$HOME/AppData/Local}/Microsoft/WinGet/Links"
+_add_to_path "/c/ProgramData/chocolatey/bin"
+_add_to_path "$HOME/scoop/shims"
+_add_to_path "/opt/homebrew/bin"
+_add_to_path "/usr/local/bin"
+_add_to_path "$HOME/.local/bin"
+export PATH
+
+install_hint() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "winget install MikeFarah.yq jqlang.jq" ;;
+    Darwin)               echo "brew install yq jq" ;;
+    *)                    echo "see https://github.com/mikefarah/yq#install" ;;
+  esac
+}
+
 require() {
   local tool="$1"
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "FAIL: required tool '$tool' not in PATH" >&2
-    exit 2
-  fi
+  command -v "$tool" >/dev/null 2>&1 && return 0
+  {
+    echo "FAIL: required tool '$tool' not found."
+    echo "  install:  $(install_hint)"
+    echo "  already installed? a terminal opened before the install keeps its old"
+    echo "  PATH — open a new one, or add the install directory to PATH by hand."
+  } >&2
+  exit 2
 }
 
 require yq
@@ -29,7 +67,11 @@ require jq
 
 # python-yq (kislyuk) has incompatible syntax; gates need mikefarah yq v4.
 if ! yq --version 2>/dev/null | grep -q "mikefarah"; then
-  echo "FAIL: 'yq' in PATH is not mikefarah yq v4 (https://github.com/mikefarah/yq)" >&2
+  {
+    echo "FAIL: the 'yq' found at $(command -v yq) is not mikefarah yq v4."
+    echo "  python-yq (kislyuk) uses incompatible syntax and will not work."
+    echo "  install: $(install_hint)"
+  } >&2
   exit 2
 fi
 
@@ -54,8 +96,7 @@ now_epoch() {
   date -u +%s
 }
 
-# GNU and BSD date disagree on how to format an epoch; try both, like the
-# sha256sum/shasum split above.
+# GNU and BSD date disagree on how to format an epoch; try both.
 epoch_to_iso() {
   local epoch="$1"
   date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
@@ -87,15 +128,6 @@ duration_to_seconds() {
     d)    echo $(( num * 86400 )) ;;
     *)    return 1 ;;
   esac
-}
-
-sha256_of() {
-  local file="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{print $1}'
-  else
-    shasum -a 256 "$file" | awk '{print $1}'
-  fi
 }
 
 # Path relative to HARNESS_ROOT — the canonical form used in status.yaml.
@@ -215,33 +247,44 @@ require_iteration_gate_passed() {
     || fail "iteration $iter has not passed its '$phase' gate (user runs: bash gates/advance.sh $phase)"
 }
 
-recorded_signoff_hash() {
-  local rel="$1"
-  yq ".signed_off_artifacts[] | select(.path == \"$rel\") | .sha256" "$STATUS_FILE" 2>/dev/null | head -1
+# --- approval ----------------------------------------------------------------
+#
+# An artifact counts as approved when it carries an explicit approval marker:
+# `approved_by: <who>` in its YAML frontmatter (markdown artifacts) or a
+# `# approved_by: <who>` comment line (e.g. Gherkin .feature files). The agent
+# writes the marker, but only after the user has actually approved in
+# conversation — a simple "approved by user" is the whole record, by deliberate
+# choice (see docs/adrs/meta-0004-trusted-approval-markers.md). There is no
+# hash: if an approved artifact changes materially afterwards, ask the user
+# again and refresh the marker.
+
+approved_by_of() {
+  local file="$1" val
+  val=$(frontmatter_value "$file" "approved_by")
+  if [ -z "$val" ]; then
+    val=$(sed -n 's/^#[[:space:]]*approved_by:[[:space:]]*//p' "$file" | head -1)
+  fi
+  echo "$val"
 }
 
-# An artifact counts as signed off only if status.yaml holds a sign-off entry
-# whose sha256 matches the file's CURRENT content. Editing after sign-off
-# invalidates the sign-off — by design.
-require_signed_off() {
-  local file="$1"
-  local rel recorded current
+require_approved() {
+  local file="$1" rel who
   rel=$(rel_to_root "$file")
-  recorded=$(recorded_signoff_hash "$rel")
-  [ -n "$recorded" ] && [ "$recorded" != "null" ] \
-    || fail "$rel has no sign-off (user runs: bash gates/signoff.sh $rel)"
-  current=$(sha256_of "$file")
-  [ "$recorded" = "$current" ] \
-    || fail "$rel was modified after sign-off (hash mismatch) — re-request approval, then user re-runs: bash gates/signoff.sh $rel"
+  who=$(approved_by_of "$file")
+  [ -n "$who" ] && [ "$who" != "null" ] \
+    || fail "$rel is not approved — after the user approves, add 'approved_by: user' to its frontmatter (or a '# approved_by: user' comment in a .feature file)"
 }
 
 # --- autopilot ---------------------------------------------------------------
 #
-# Auto-approve, deliberately narrow: only the iteration cycle, only while it has
-# wall-clock time and iteration budget left. Everything here is a pure read;
-# autopilot.sh does the writing, advance.sh spends the budget.
+# Auto mode: WITHOUT it the cycle is human-in-the-loop (the user approves every
+# artifact and every transition); WITH it the agent runs the whole machine
+# alone — every phase except release, which always waits for a human. It stays
+# bounded: wall-clock expiry and an iteration budget act as the emergency
+# brake. Everything here is a pure read; autopilot.sh does the writing,
+# advance.sh spends the budget.
 
-AUTOPILOT_PHASES="design implement verify"
+AUTOPILOT_PHASES="discover architect model plan design implement verify"
 
 autopilot_field() {
   yq ".autopilot.$1" "$STATUS_FILE" 2>/dev/null
@@ -313,14 +356,14 @@ print_autopilot_status() {
   else
     echo "autopilot: OFF ($reason)"
   fi
-  echo "  scope:              ${AUTOPILOT_PHASES// /, } (iteration cycle only)"
+  echo "  scope:              ${AUTOPILOT_PHASES// /, } (everything except release)"
   echo "  expires_at:         $(autopilot_field expires_at)"
   echo "  iterations_used:    $(autopilot_field iterations_used) / $(autopilot_field max_iterations)"
   echo "  iterations_claimed: $(yq -o=json '.autopilot.iterations_claimed // []' "$STATUS_FILE" | jq -r 'join(", ") | if . == "" then "-" else . end')"
   echo "  enabled_by:         $(autopilot_field enabled_by)"
 }
 
-# --- mutations below: ONLY for signoff.sh / advance.sh / autopilot.sh ---
+# --- mutations below: ONLY for advance.sh / autopilot.sh ---
 
 set_status() {
   local phase="$1"

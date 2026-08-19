@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# Turn auto-approve on or off for the iteration cycle.
+# Turn auto mode on or off. Off = human-in-the-loop development cycle (the
+# user approves every artifact and every transition). On = the agent runs the
+# cycle alone, without a human in the loop — except release.
 #
-# THIS SCRIPT IS RUN BY THE USER, NOT THE AGENT. Enabling requires an
-# interactive terminal, so an agent in a non-interactive session cannot switch
-# it on. It is deliberately narrow:
+# ENABLING IS THE USER'S DECISION: the agent may run 'autopilot.sh on' only
+# when the user explicitly asked for auto mode in conversation — never on its
+# own initiative. Bounds:
 #
-#   * scope   — only design/implement/verify. discover, architect, model, plan
-#               and release always need a human sign-off, because that is where
-#               the load-bearing decisions are made.
+#   * scope   — every phase except release. The final release transition
+#               always needs a human, so a fully auto run still ends in
+#               front of a person.
 #   * budget  — it expires (wall clock) and is capped in iterations, so a
 #               forgotten autopilot cannot run away.
-#   * audit   — auto sign-offs are recorded as by "autopilot(<user>)" with
-#               auto: true, so the registry always shows what a human actually
-#               read and what a machine waved through.
+#   * audit   — auto-advances are attributed to "autopilot(<user>)" in the
+#               audit trail, and auto-approved artifacts carry
+#               "approved_by: autopilot", so it stays visible what a human
+#               actually read and what a machine waved through.
 #
 # Usage:
 #   bash gates/autopilot.sh on [--expires 8h] [--max-iterations 3] [--by NAME]
@@ -25,7 +28,7 @@ GATE_NAME="autopilot"
 . "$SCRIPT_DIR/_lib.sh"
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 [ $# -ge 1 ] || { usage; exit 2; }
@@ -41,7 +44,7 @@ case "$action" in
     yq -i '.autopilot.enabled = false' "$STATUS_FILE"
     yq -i ".autopilot.disabled_at = \"$(now_iso)\"" "$STATUS_FILE"
     yq -i ".last_updated = \"$(now_iso)\"" "$STATUS_FILE"
-    echo "autopilot: OFF — every gate needs your sign-off again"
+    echo "autopilot: OFF — every phase transition needs your approval again"
     ;;
 
   on)
@@ -57,12 +60,11 @@ case "$action" in
       esac
     done
 
-    # An agent must not be able to grant itself autonomy. Requiring a terminal
-    # is the same barrier advance.sh uses — weak against a determined operator,
-    # but it does stop the ordinary non-interactive agent session.
-    if [ ! -t 0 ] && [ "${HARNESS_AUTOPILOT_I_AM_HUMAN:-}" != "1" ]; then
-      fail "enabling autopilot requires an interactive terminal — run it yourself"
-    fi
+    # Deliberately runnable without a terminal: the user enables auto mode by
+    # saying so in chat, and the agent runs this command for them. The rule
+    # that the agent does this ONLY on explicit user instruction is an
+    # instruction (AGENTS.md), not a mechanism — the expiry and iteration
+    # budget below are the mechanical emergency brake.
 
     case "$max_iterations" in
       ''|*[!0-9]*) fail "--max-iterations must be a whole number" ;;
@@ -82,7 +84,7 @@ case "$action" in
 
     export AP_BY="$by" AP_AT="$ts" AP_EXP="$expires_at"
     yq -i '.autopilot.enabled = true' "$STATUS_FILE"
-    yq -i '.autopilot.scope = "iteration_cycle"' "$STATUS_FILE"
+    yq -i '.autopilot.scope = "all_but_release"' "$STATUS_FILE"
     yq -i '.autopilot.enabled_by = strenv(AP_BY)' "$STATUS_FILE"
     yq -i '.autopilot.enabled_at = strenv(AP_AT)' "$STATUS_FILE"
     yq -i '.autopilot.expires_at = strenv(AP_EXP)' "$STATUS_FILE"
@@ -93,13 +95,13 @@ case "$action" in
     yq -i ".last_updated = \"$ts\"" "$STATUS_FILE"
 
     cat <<EOF
-autopilot: ON
-  scope:      design → implement → verify (iteration cycle only)
+autopilot: ON — no human in the loop until it expires or you turn it off
+  scope:      discover → architect → model → plan → ⟳(design → implement → verify)
   expires:    $expires_at
   budget:     $max_iterations iteration(s)
   enabled by: $by
 
-discover, architect, model, plan and release still stop for your sign-off.
+release always stops for your approval.
 Turn it off any time: bash gates/autopilot.sh off
 EOF
     ;;

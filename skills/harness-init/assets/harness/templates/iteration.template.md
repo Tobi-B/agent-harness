@@ -1,10 +1,15 @@
 ---
 id: ITER-NN
 status: draft | approved
+approved_by:
 references:
   - US-001
   - ADR-0001
 ---
+
+<!-- approved_by stays empty in drafts. The agent fills in 'user' after the
+     user approves the rendered design in chat ('autopilot' only under an
+     active autopilot budget). The design gate fails while it is empty. -->
 
 # ITER-NN <Title>
 

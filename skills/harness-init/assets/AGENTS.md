@@ -7,7 +7,7 @@ setup. Claude Code and opencode also have a `/harness` command.
 
 ## Quick Start
 
-1. Read `harness/status.yaml` — `current_phase`, `current_iteration`, sign-offs.
+1. Read `harness/status.yaml` — `current_phase`, `current_iteration`, autopilot.
 2. Read `harness/workflow.yaml` — phases, gates, hardcaps.
 3. Read `harness/dor_dod.yaml` — per-phase readiness criteria.
 4. Read `harness/docs/plan.md` — the iteration list, once past `plan`.
@@ -24,44 +24,52 @@ discover → architect → model → plan → ⟳( design → implement → veri
 iteration in `docs/plan.md` and record their state under
 `iterations.<ITER-NN>` in `status.yaml`.
 
-Per phase: **interview → draft → render → user signs off → run gate → user advances.**
+Per phase: **interview → draft → render → user approves in chat → you record it → run gate → user advances.**
 
 User approval is required for: phase transitions, every ADR, every iteration
-design, changes to signed-off artifacts, exceptions to hardcaps.
+design, material changes to already-approved artifacts, exceptions to hardcaps.
 
-## Sign-off is the user's action, not yours
+## Approval is the user's word, not yours
 
-Approvals live in the sign-off registry in `harness/status.yaml` (path + sha256
-+ by + at), written **only** by the user running
-`bash harness/gates/signoff.sh <artifact>`. Do not run `signoff.sh` yourself and
-do not edit `signed_off_artifacts` — gates verify the recorded hash against the
-file's current content, so a forged or stale entry fails the gate. If you edit a
-signed-off artifact, tell the user it needs re-sign-off.
+An artifact is approved when it carries an `approved_by:` marker: a frontmatter
+field in markdown artifacts, a `# approved_by: user` comment line in `.feature`
+files. There is no hash and no registry — deliberately (see
+`harness/docs/adrs/meta-0004-trusted-approval-markers.md`). You physically CAN
+write that marker any time, which is exactly why the rule matters: write
+`approved_by: user` **only after the user has explicitly approved that artifact
+in conversation**. Never pre-fill it in drafts, never infer approval from
+silence, and if you materially edit an approved artifact afterwards, tell the
+user, ask again, and only then refresh the marker. A fabricated approval defeats
+the harness at its core; nothing else in this file matters more than this.
 
-The single exception is `--auto`, and only while the user has enabled autopilot
-(see below).
+The single exception is `approved_by: autopilot`, and only while the user has
+enabled auto mode (see below).
 
-## Autopilot — only if the user turned it on
+## Auto mode — only if the user asked for it
 
-The user can hand you the iteration cycle with
-`bash harness/gates/autopilot.sh on [--expires 8h] [--max-iterations 3]`. Only
-they can enable it (it requires an interactive terminal); never try to enable it
-yourself, and never edit the `autopilot` block in `status.yaml`.
+Two modes exist. **Without auto** this is a human-in-the-loop development
+cycle: the user approves every artifact and every transition. **With auto**
+there is no human in the loop: you run every phase except `release` alone.
+
+Enabling is the user's decision, made in conversation. When — and only when —
+the user explicitly asks for auto mode, run
+`bash harness/gates/autopilot.sh on [--expires 8h] [--max-iterations 3]` for
+them. Never enable it on your own initiative, and never edit the `autopilot`
+block in `status.yaml` directly.
 
 Check with `bash harness/gates/autopilot.sh status` (exit 0 = on). While it is
-on, and only for `design`/`implement`/`verify`:
+on, for every phase except `release`:
 
-- sign the iteration's own design file with
-  `bash harness/gates/signoff.sh docs/iterations/ITER-NN.md --auto` — it refuses
-  any other path, and records the approval as `auto: true` so the registry stays
-  honest about what no human read;
-- `bash harness/gates/advance.sh <phase>` proceeds without the prompt and spends
-  one iteration of budget.
+- you may mark artifacts you drafted as `approved_by: autopilot` — never
+  `approved_by: user`, so it stays honest about what no human read;
+- `bash harness/gates/advance.sh <phase>` proceeds without the prompt;
+  iteration-cycle phases spend the iteration budget.
 
-Autopilot changes who approves, not what is checked: gates still have to pass,
-and you still render the design and leave it for the user to find. If it is off,
+Auto mode changes who approves, not what is checked: gates still have to pass,
+and you still render designs and leave them for the user to find. If it is off,
 expired, or out of budget, stop and say so — do not reach for `--yes`.
-`discover`, `architect`, `model`, `plan` and `release` always wait for the user.
+`release` always waits for the user, so even a fully auto run ends in front of
+a person.
 
 ## Gates are executable and pure
 
@@ -84,15 +92,15 @@ bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o <out>.html --titl
 ```
 
 Then show it (`SendUserFile` with `display: "render"`). The `design` gate
-requires a rendered HTML whose embedded sha256 matches the current markdown, so
-a stale render fails. Never ask for design sign-off without showing the diagram.
+requires a rendered HTML that is not older than the markdown, so re-render
+after editing. Never ask for design approval without showing the diagram.
 
 ## Traceability
 
 Every artifact carries YAML frontmatter with `references:` to what it depends
 on (`references: [US-003, ADR-0001]`). The `model` gate verifies that every
 diagram's `%% sources:` line references at least one upstream artifact. The
-`plan` gate verifies that every signed-off story is covered by some iteration.
+`plan` gate verifies that every approved story is covered by some iteration.
 
 ## Acceptance Criteria are Executable
 
@@ -102,16 +110,16 @@ Skeletons live in `harness/templates/`.
 
 ## Status
 
-`harness/status.yaml` is the authoritative state. Gates never write it;
-`signoff.sh` and `advance.sh` do. Frontmatter `status:` fields are
-informational — the sign-off registry is the authority. `docs/plan.md`
-frontmatter is the authority on what the iterations are.
+`harness/status.yaml` is the authoritative phase state. Gates never write it;
+`advance.sh` and `autopilot.sh` do. Approvals live in the artifacts themselves
+as `approved_by:` markers; frontmatter `status:` fields are informational.
+`docs/plan.md` frontmatter is the authority on what the iterations are.
 
 ## Meta-loop
 
 Changes to the harness itself (`workflow.yaml`, `gates/`, `dor_dod.yaml`,
 templates) go through `harness/docs/WORKFLOW_CHANGES.md`: a `meta-NNNN-*.md`
-ADR, user sign-off, version bump. Do not edit `workflow.yaml` ad-hoc.
+ADR, user approval, version bump. Do not edit `workflow.yaml` ad-hoc.
 
 ## Tools
 

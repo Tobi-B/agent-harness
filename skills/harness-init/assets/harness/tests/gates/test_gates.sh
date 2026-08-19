@@ -37,7 +37,26 @@ t_fails() {
   fi
 }
 
-signoff() { bash "$GATES_DIR/signoff.sh" "$1" --by tester >/dev/null; }
+# Write the approval marker the way the agent would after the user approves:
+# frontmatter field in .md artifacts, comment line in .feature files.
+approve() {
+  local f="$FIXTURE/$1"
+  case "$f" in
+    *.feature)
+      if grep -q '^#[[:space:]]*approved_by:' "$f"; then
+        sed -i 's/^#[[:space:]]*approved_by:.*/# approved_by: tester/' "$f"
+      else
+        sed -i '1i # approved_by: tester' "$f"
+      fi ;;
+    *)
+      if grep -q '^approved_by:' "$f"; then
+        sed -i 's/^approved_by:.*/approved_by: tester/' "$f"
+      else
+        sed -i '0,/^---$/s/^---$/---\napproved_by: tester/' "$f"
+      fi ;;
+  esac
+}
+unapprove() { sed -i '/^#\{0,1\}[[:space:]]*approved_by:/d' "$FIXTURE/$1"; }
 advance() { bash "$GATES_DIR/advance.sh" "$1" --yes >/dev/null; }
 status()  { yq "$1" "$FIXTURE/status.yaml"; }
 
@@ -85,8 +104,8 @@ Feature: $id
     When the gate runs
     Then it passes
 EOF
-  signoff "docs/user_stories/${id}-test.md"
-  signoff "tests/features/${id}-test.feature"
+  approve "docs/user_stories/${id}-test.md"
+  approve "tests/features/${id}-test.feature"
 }
 
 # --- _lib unit tests ---------------------------------------------------------
@@ -101,15 +120,24 @@ make_story US-001
 t       "has_frontmatter_field finds existing field"  has_frontmatter_field "$FIXTURE/docs/user_stories/US-001-test.md" "id"
 t_fails "has_frontmatter_field rejects missing field" has_frontmatter_field "$FIXTURE/docs/user_stories/US-001-test.md" "nope"
 t       "frontmatter_value extracts value" test "$(frontmatter_value "$FIXTURE/docs/user_stories/US-001-test.md" "status")" = "draft"
+t       "approved_by_of reads frontmatter marker" \
+  test "$(approved_by_of "$FIXTURE/docs/user_stories/US-001-test.md")" = "tester"
+t       "approved_by_of reads feature comment marker" \
+  test "$(approved_by_of "$FIXTURE/tests/features/US-001-test.feature")" = "tester"
 
-# --- discover: sign-off registry --------------------------------------------
+# --- discover: approval markers ----------------------------------------------
 
-t "discover passes with valid sign-offs" bash "$GATES_DIR/discover.sh"
+t "discover passes with approval markers" bash "$GATES_DIR/discover.sh"
 
+unapprove "docs/user_stories/US-001-test.md"
+t_fails "discover fails when a story lacks approved_by" bash "$GATES_DIR/discover.sh"
+approve "docs/user_stories/US-001-test.md"
+t "discover passes once the marker is restored" bash "$GATES_DIR/discover.sh"
+
+# No hash, by design (meta-0004): a post-approval edit does not invalidate the
+# marker mechanically — re-asking the user on material edits is an instruction.
 echo "tampered" >> "$FIXTURE/docs/user_stories/US-001-test.md"
-t_fails "discover fails after post-sign-off edit (hash mismatch)" bash "$GATES_DIR/discover.sh"
-signoff "docs/user_stories/US-001-test.md"
-t "discover passes after re-sign-off" bash "$GATES_DIR/discover.sh"
+t "discover still passes after a post-approval edit (trust model)" bash "$GATES_DIR/discover.sh"
 
 # --- gates are pure ----------------------------------------------------------
 
@@ -158,8 +186,8 @@ cat > "$FIXTURE/docs/architecture.md" <<'EOF'
 ## Code (Level 4)
 ## Cross-Cutting Concerns
 EOF
-t_fails "architect fails without ADR sign-off" bash "$GATES_DIR/architect.sh"
-signoff "docs/adrs/0001-test.md"
+t_fails "architect fails without ADR approval" bash "$GATES_DIR/architect.sh"
+approve "docs/adrs/0001-test.md"
 t "advance architect" advance architect
 
 # --- model -------------------------------------------------------------------
@@ -214,8 +242,8 @@ write_plan "  - id: ITER-01
   - id: ITER-02
     goal: second
     stories: [US-002]"
-t_fails "plan fails without sign-off" bash "$GATES_DIR/plan.sh"
-signoff "docs/plan.md"
+t_fails "plan fails without approval" bash "$GATES_DIR/plan.sh"
+approve "docs/plan.md"
 t "advance plan" advance plan
 t "plan opened iteration cycle at ITER-01" test "$(status '.current_iteration')" = "ITER-01"
 t "current_phase is design"                test "$(status '.current_phase')" = "design"
@@ -247,25 +275,26 @@ EOF
 }
 
 # Stand-in for the mermaid-render skill: what design.sh actually requires is a
-# render carrying the source's sha256 (see gates/design.sh).
+# rendered html that is not older than its source (mtime, see gates/design.sh).
 render_design() {
   local iter="$1"
-  printf '<html><meta name="rendered-from" data-sha256="%s"></html>' \
-    "$(sha256_of "$FIXTURE/docs/iterations/${iter}.md")" \
-    > "$FIXTURE/docs/iterations/${iter}.html"
+  printf '<html>render</html>' > "$FIXTURE/docs/iterations/${iter}.html"
 }
 
 make_design ITER-01 US-001
 t_fails "design fails without rendered html" bash "$GATES_DIR/design.sh"
 
 render_design ITER-01
-echo "<!-- edited after render -->" >> "$FIXTURE/docs/iterations/ITER-01.md"
-t_fails "design fails on stale render (source changed)" bash "$GATES_DIR/design.sh"
+# Age the render explicitly: same-second edits are deliberately tolerated, so
+# staleness needs an html that is measurably older than the markdown.
+touch -d "2000-01-01 00:00:00" "$FIXTURE/docs/iterations/ITER-01.html"
+t_fails "design fails on stale render (older than source)" bash "$GATES_DIR/design.sh"
 
 render_design ITER-01
-t_fails "design fails without sign-off" bash "$GATES_DIR/design.sh"
-signoff "docs/iterations/ITER-01.md"
-t "design passes with fresh render + sign-off" bash "$GATES_DIR/design.sh"
+t_fails "design fails without approval" bash "$GATES_DIR/design.sh"
+approve "docs/iterations/ITER-01.md"
+render_design ITER-01
+t "design passes with fresh render + approval" bash "$GATES_DIR/design.sh"
 
 t_fails "implement blocked before design gate passes" bash "$GATES_DIR/implement.sh"
 t "advance design" advance design
@@ -291,8 +320,8 @@ t_fails "release blocked while ITER-02 unfinished" bash "$GATES_DIR/release.sh"
 
 # Second iteration through the cycle.
 make_design ITER-02 US-002
+approve "docs/iterations/ITER-02.md"
 render_design ITER-02
-signoff "docs/iterations/ITER-02.md"
 t "advance design (ITER-02)"    advance design
 t "advance implement (ITER-02)" advance implement
 sed -i 's/- \[ \] US-002 pending/- [x] US-002 verified/' "$FIXTURE/docs/iterations/ITER-02.md"
@@ -325,41 +354,31 @@ t "workflow complete" test "$(status '.phases.release.gate_passed')" = "true"
 # the phase machine, which the loop tests above already cover.
 
 autopilot() { bash "$GATES_DIR/autopilot.sh" "$@"; }
-autopilot_on() {
-  HARNESS_AUTOPILOT_I_AM_HUMAN=1 autopilot on "$@" --by tester >/dev/null
-}
+autopilot_on() { autopilot on "$@" --by tester >/dev/null; }
 
 t_fails "autopilot is off in a fresh harness" autopilot status
-t_fails "autopilot cannot be enabled without a terminal" \
-  env -u HARNESS_AUTOPILOT_I_AM_HUMAN HARNESS_ROOT="$FIXTURE" \
-      bash "$GATES_DIR/autopilot.sh" on < /dev/null
-t_fails "autopilot rejects an unreadable --expires" \
-  env HARNESS_AUTOPILOT_I_AM_HUMAN=1 HARNESS_ROOT="$FIXTURE" \
-      bash "$GATES_DIR/autopilot.sh" on --expires 9x
-t_fails "autopilot caps --expires at 3d" \
-  env HARNESS_AUTOPILOT_I_AM_HUMAN=1 HARNESS_ROOT="$FIXTURE" \
-      bash "$GATES_DIR/autopilot.sh" on --expires 7d
-t_fails "autopilot rejects a zero iteration budget" \
-  env HARNESS_AUTOPILOT_I_AM_HUMAN=1 HARNESS_ROOT="$FIXTURE" \
-      bash "$GATES_DIR/autopilot.sh" on --max-iterations 0
+# Enabling is chat-instructed: no terminal needed (meta-0005). The rule that
+# the agent runs 'on' only on explicit user instruction is an instruction.
+t "autopilot enables without a terminal" \
+  bash -c "bash '$GATES_DIR/autopilot.sh' on --by tester < /dev/null > /dev/null"
+t "autopilot turns off again" autopilot off
+t_fails "autopilot rejects an unreadable --expires" autopilot on --expires 9x
+t_fails "autopilot caps --expires at 3d" autopilot on --expires 7d
+t_fails "autopilot rejects a zero iteration budget" autopilot on --max-iterations 0
+
+# Scope: everything except release (meta-0005).
+t "auto scope covers discover" \
+  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope discover"
+t "auto scope covers plan" \
+  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope plan"
+t_fails "auto scope excludes release" \
+  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope release"
 
 t "autopilot turns on" autopilot_on --expires 4h --max-iterations 2
 t "autopilot reports on" autopilot status
 t "autopilot records who enabled it" test "$(status '.autopilot.enabled_by')" = "tester"
-
-mkdir -p "$FIXTURE/docs/iterations"
-echo "# ITER-99 autopilot fixture" > "$FIXTURE/docs/iterations/ITER-99.md"
-
-t "auto sign-off accepts an iteration artifact" \
-  bash "$GATES_DIR/signoff.sh" docs/iterations/ITER-99.md --auto
-t "auto sign-off is marked auto:true" \
-  test "$(status '.signed_off_artifacts[] | select(.path == "docs/iterations/ITER-99.md") | .auto')" = "true"
-t "auto sign-off is attributed to autopilot" \
-  bash -c "status() { yq \"\$1\" \"$FIXTURE/status.yaml\"; }; \
-           status '.signed_off_artifacts[] | select(.path == \"docs/iterations/ITER-99.md\") | .by' \
-           | grep -q '^autopilot('"
-t_fails "auto sign-off refuses a non-iteration artifact" \
-  bash "$GATES_DIR/signoff.sh" docs/prd.md --auto
+t_fails "release still needs a human while autopilot is on" \
+  bash "$GATES_DIR/advance.sh" release < /dev/null
 
 # Budget: charged once per iteration, no matter how many phases it carries.
 # shellcheck source=../../gates/_lib.sh
@@ -374,14 +393,10 @@ t "budget charges a second iteration separately" bash -c "
   autopilot_claim_iteration ITER-97
   [ \"\$(yq '.autopilot.iterations_used' '$FIXTURE/status.yaml')\" = '2' ]"
 t_fails "autopilot stops when the iteration budget is spent" autopilot status
-t_fails "auto sign-off refused once out of budget" \
-  bash "$GATES_DIR/signoff.sh" docs/iterations/ITER-99.md --auto
 
 t "autopilot turns on again with fresh budget" autopilot_on --expires 4h --max-iterations 1
 yq -i '.autopilot.expires_at = "2020-01-01T00:00:00Z"' "$FIXTURE/status.yaml"
 t_fails "autopilot stops when expired" autopilot status
-t_fails "auto sign-off refused once expired" \
-  bash "$GATES_DIR/signoff.sh" docs/iterations/ITER-99.md --auto
 
 t "autopilot turns off" autopilot off
 t "off is recorded" test "$(status '.autopilot.enabled')" = "false"

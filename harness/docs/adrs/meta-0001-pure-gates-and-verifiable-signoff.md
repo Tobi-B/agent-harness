@@ -1,6 +1,6 @@
 ---
 id: meta-0001
-status: accepted
+status: partially superseded by meta-0004 (sign-off registry; pure gates and advance flow stand)
 date: 2026-07-18
 references:
   - WORKFLOW_CHANGES.md

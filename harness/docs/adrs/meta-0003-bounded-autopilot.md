@@ -1,6 +1,6 @@
 ---
 id: meta-0003
-status: accepted
+status: partially superseded by meta-0005 (scope and enablement; budget, expiry, audit marking stand)
 date: 2026-07-29
 references:
   - WORKFLOW_CHANGES.md

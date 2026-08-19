@@ -68,8 +68,8 @@ Links, references, related ADRs (use `supersedes: 0000` if replacing).
 
 1. Agent drafts the ADR with `status: proposed` and at least two options with tradeoffs.
 2. User decides; agent sets `status: accepted`.
-3. User signs off by running `bash gates/signoff.sh docs/adrs/NNNN-<slug>.md` — this records the file's sha256 in `status.yaml`. The registry is the approval authority; frontmatter is informational.
-4. Gate `gates/architect.sh` checks `status: accepted`, the MADR sections, and that the recorded hash matches the current file content (edits after sign-off fail the gate).
+3. User approves in conversation; the agent then writes `approved_by: user` into the ADR's frontmatter — only after, never before, the user actually said so.
+4. Gate `gates/architect.sh` checks `status: accepted`, the MADR sections, and the `approved_by:` marker. If an approved ADR changes materially, ask the user again before keeping the marker.
 5. Hardcap enforced: a 4th ADR is rejected unless the hardcap is relaxed in `workflow.yaml`.
 
 ## Hardcap

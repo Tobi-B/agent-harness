@@ -1,18 +1,18 @@
-version: 3
+version: 4
 current_phase: discover
 current_iteration: null
 last_updated: null
-# Sign-off registry — the single authority on approvals. Entries are written
-# ONLY by gates/signoff.sh (run by the user). Gates verify sha256 against the
-# file's current content; editing after sign-off invalidates the entry.
-signed_off_artifacts: []
-# Auto-approve for the iteration cycle. Written ONLY by gates/autopilot.sh
-# (run by the user, interactive terminal required) and by advance.sh spending
-# the iteration budget. Out of scope by design: discover, architect, model,
-# plan, release — those always need a human sign-off.
+# Approvals do NOT live here. An artifact is approved when it carries an
+# `approved_by:` marker in its own frontmatter (or a '# approved_by:' comment
+# in .feature files), written by the agent only after the user approved in
+# conversation. See docs/adrs/meta-0004-trusted-approval-markers.md.
+# Auto mode. Off = human-in-the-loop cycle; on = the agent runs every phase
+# except release without asking, bounded by expiry and iteration budget.
+# Written ONLY by gates/autopilot.sh — which the agent runs solely on the
+# user's explicit chat instruction — and by advance.sh spending the budget.
 autopilot:
   enabled: false
-  scope: iteration_cycle
+  scope: all_but_release
   enabled_by: null
   enabled_at: null
   expires_at: null
