@@ -5,8 +5,8 @@ date: 2026-07-18
 references:
   - WORKFLOW_CHANGES.md
 sign-off:
-  by: tbbruns34
-  at: 2026-07-18 (instructed in chat — "setze die fixes um")
+  by: user
+  at: 2026-07-18 (approved in chat)
 ---
 
 # meta-0001 Pure gates, verifiable sign-off, enforced-only criteria
