@@ -3,7 +3,8 @@ name: harness-init
 description: |
   Scaffold the lean development harness into a project: a phase machine
   (discover → architect → model → plan → ⟳design/implement/verify → release)
-  with executable gates, hash-verified user sign-off, per-iteration design
+  with executable gates, lightweight user approval ("approved_by: user" markers
+  in the artifacts, no hashes), per-iteration design
   reviews rendered as Mermaid diagrams, and a git-persisted state file. Use when
   the user wants to start a project in a structured way, or asks for a "harness",
   "dev loop", "development process", "project scaffold", "spec-driven
@@ -18,11 +19,19 @@ day-to-day work runs through `/harness`.
 
 ## What makes this harness different
 
-Gates are **executable and pure** (bash + exit codes, no side effects), and
-approvals are **not forgeable by the agent**: sign-off is a sha256 registry in
-`harness/status.yaml` written only by the user running `signoff.sh`. Editing a
-signed-off artifact invalidates its sign-off. Do not try to work around this —
-it is the point.
+Gates are **executable and pure** (bash + exit codes, no side effects): you may
+run them as often as you like, and no amount of arguing makes a failing one pass.
+
+Approval works the other way round — on trust, not on mechanism. An artifact is
+approved when it carries an `approved_by: user` marker (frontmatter in markdown,
+a `# approved_by: user` comment in `.feature` files). There is no hash and no
+registry; an earlier sha256 scheme was removed in
+`harness/docs/adrs/meta-0004-trusted-approval-markers.md`. You physically *can*
+write that marker at any moment, which is exactly why the rule is absolute:
+write it **only after the user has explicitly approved that artifact in
+conversation**. Never pre-fill it in a draft, never read approval into silence,
+and after a material edit to an approved artifact, ask again before restoring
+the marker.
 
 ## Install
 
@@ -63,21 +72,34 @@ The loop, and who does what:
 |---|---|
 | Interview, draft artifacts, render diagrams | agent |
 | `bash harness/gates/<phase>.sh` (pure check) | agent, freely |
-| `bash harness/gates/signoff.sh <artifact>` | **user only** (agent: `--auto` under autopilot) |
-| `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction, or under autopilot) |
-| `bash harness/gates/autopilot.sh on\|off\|status` | **user only** — enabling needs a terminal |
+| Approving an artifact | **user**, in conversation |
+| Writing the `approved_by:` marker | agent — *only after* the user approved |
+| `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction, or under auto mode) |
+| `bash harness/gates/autopilot.sh on\|off\|status` | agent, but **only** on the user's explicit chat instruction |
 
 Phases: `discover → architect → model → plan → ⟳(design → implement → verify) → release`.
 The middle three are iteration-scoped and repeat per iteration in
 `harness/docs/plan.md`.
 
-## Autopilot
+## Auto mode
+
+Two modes exist. **Without auto**, this is a human-in-the-loop cycle: the user
+approves every artifact and every transition. **With auto**, there is no human
+in the loop — the agent runs every phase except `release`, which always waits
+for a person, so even a fully unattended run ends in front of one.
 
 If the user wants unattended runs, tell them about
-`bash harness/gates/autopilot.sh on --expires 8h --max-iterations 3`. It hands
-the agent the iteration cycle only, expires on time and iteration count, and
-marks every machine approval `auto: true`. Only the user can enable it — it
-requires an interactive terminal — so offer it, never switch it on. It pairs
+`bash harness/gates/autopilot.sh on --expires 8h --max-iterations 3`. Enabling
+is the user's decision, made in conversation: run it **only** when they
+explicitly ask, never on your own initiative, and never edit the `autopilot`
+block in `status.yaml` by hand. It is bounded by wall-clock expiry *and* an
+iteration budget — the emergency brake for a forgotten auto run — and machine
+approvals are marked `approved_by: autopilot`, never `user`, so it stays
+visible what no human read. See
+`harness/docs/adrs/meta-0005-full-autopilot-except-release.md`.
+
+Auto mode changes who approves, not what is checked: gates still have to pass,
+and designs still get rendered for the user to find afterwards. It pairs
 naturally with Claude Code's built-in `/loop`, which supplies the heartbeat
 while the gates supply the guardrails.
 
@@ -86,8 +108,9 @@ while the gates supply the guardrails.
 - Keep the scaffold lean — do not add documents or restructure it during
   install. The harness's value is that a human can hold the whole thing in
   their head.
-- Never fabricate approvals or pre-fill `signed_off_artifacts`. A forged entry
-  fails the gate, because the hash will not match.
+- Never fabricate an approval. Nothing mechanical stops you from writing
+  `approved_by: user` into an artifact nobody read — the gate cannot tell the
+  difference. That is precisely why it must never happen.
 - In `design`, render the Mermaid with the `mermaid-render` skill and show the
   user the page before asking for approval. A design gate that was approved
   without anyone looking at the diagram defeats the purpose.
