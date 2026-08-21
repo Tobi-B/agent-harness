@@ -28,10 +28,30 @@ jobs:
       - name: Scaffold into a clean project and self-test there
         run: |
           bash harness/init.sh /tmp/scaffold-check --name ci-demo --no-git
-          test ! -e /tmp/scaffold-check/harness/docs/user_stories/US-001*.md
-          test "$(yq '.signed_off_artifacts | length' /tmp/scaffold-check/harness/status.yaml)" = "0"
-          test "$(yq '.current_phase' /tmp/scaffold-check/harness/status.yaml)" = "discover"
-          bash /tmp/scaffold-check/harness/tests/gates/test_gates.sh
+          S=/tmp/scaffold-check/harness
+
+          # A fresh scaffold must start clean. State lives in status.yaml:
+          test "$(yq '.current_phase' "$S/status.yaml")" = "discover"
+          test "$(yq '[.phases[].gate_passed] | any' "$S/status.yaml")" = "false"
+          test "$(yq '.iterations | length' "$S/status.yaml")" = "0"
+          test "$(yq '.autopilot.enabled' "$S/status.yaml")" = "false"
+          test ! -e "$S/docs/user_stories/US-001"*.md
+
+          # ...and approvals live in the artifacts, not in status.yaml, since
+          # meta-0004 replaced the sha256 registry with `approved_by:` markers.
+          # Scope this to artifact-shaped files: the READMEs and templates
+          # document the marker syntax and would match a naive pattern.
+          # `|| true` because grep exits 1 on no match, which is the pass case.
+          approved=$(find "$S/docs" "$S/tests/features" \
+            \( -name 'US-*.md' -o -name '000*.md' -o -name 'plan.md' \
+               -o -name 'ITER-*.md' -o -name 'US-*.feature' \) \
+            -exec grep -lE '^(#[[:space:]]*)?approved_by:[[:space:]]*[^[:space:]#]' {} + || true)
+          if [ -n "$approved" ]; then
+            echo "::error::fresh scaffold ships pre-filled approvals: $approved"
+            exit 1
+          fi
+
+          bash "$S/tests/gates/test_gates.sh"
 
       - name: Skill assets in sync with repo
         run: bash tools/sync-skill.sh --check
