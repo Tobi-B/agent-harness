@@ -41,7 +41,9 @@ rm -f  "$stage/harness/docs/user_stories/US-"* \
        "$stage/harness/tests/features/US-"* \
        "$stage/harness/docs/iterations/"*
 find "$stage/harness/docs/adrs" -name '000*.md' -delete 2>/dev/null || true
-mkdir -p "$stage/harness/audit"
+# No `mkdir audit` here: git cannot track an empty directory, so the assets
+# can never carry one in a fresh clone and the --check diff would always
+# report it as drift. init.sh creates audit/ in the target at scaffold time.
 
 if [ "$check_only" -eq 1 ]; then
   if [ ! -d "$ASSETS" ]; then
