@@ -27,7 +27,7 @@ iteration listed in `docs/plan.md`. `advance.sh verify` either loops back to
 | `model` | system-level C4 / sequence / state diagrams | — |
 | `plan` | `docs/plan.md` with the iteration list | the plan |
 | `design` | `docs/iterations/ITER-NN.md` + rendered `.html` | each iteration design |
-| `implement` | `src/**`, `tests/**` | — |
+| `implement` | code in the project's `source_dirs`, tests | — |
 | `verify` | `## Verification` in the iteration file | — |
 | `release` | `docs/verify-report.md` | — |
 
@@ -80,6 +80,7 @@ harness — see `tools/sync-skill.sh` in the source repo.
 | `workflow.yaml` | Phases, `scope`, gates (`run:` + enforced `checks:`), hardcaps. |
 | `dor_dod.yaml` | Definition of Ready / Done per phase; `(manual)` = not machine-checked. |
 | `status.yaml` | Live state: phase, current iteration, per-iteration gate flags, autopilot budget. |
+| `project.yaml` | **Project-owned**: source dirs + test/lint/acceptance commands for the implement gate. Editing it is normal project work, no meta ADR. |
 | `docs/prd.md` | Goals, Non-Goals, Success Criteria, NFRs. |
 | `docs/architecture.md` | C4 architecture + cross-cutting concerns. |
 | `docs/plan.md` | **Iteration list in frontmatter** — the source of truth for the cycle. |
@@ -102,8 +103,14 @@ harness — see `tools/sync-skill.sh` in the source repo.
 - `plan` requires **every** approved story to be covered by some iteration.
 - `design` requires a rendered HTML that is not older than the markdown — you
   cannot approve a design nobody could look at, or an obviously stale one.
-- `implement` **fails** if `pytest`/`ruff`/`behave` are needed but missing; set
-  `HARNESS_ALLOW_MISSING_TOOLS=1` to skip explicitly.
+- `implement` runs the commands from `project.yaml` in the **project root** (the
+  directory containing `harness/`). No source, an unconfigured command or a
+  missing tool **fails** it; `HARNESS_ALLOW_MISSING_TOOLS=1` downgrades those to
+  warnings. A command that runs and fails is never downgraded. TODO/FIXME in
+  delivered code fails it — comments included.
+- `advance.sh` only advances the **current** phase — it cannot rewind or skip.
+- Approval counts only as `approved_by: user` or `approved_by: autopilot`;
+  empty values and placeholders (`TBD`, `pending`, `""`) are drafts.
 - `release` requires every PRD checkbox checked and every iteration verified.
 
 ## Rendering diagrams
@@ -136,9 +143,14 @@ Changes to `workflow.yaml`, `gates/`, `dor_dod.yaml`, or templates go through
 
 ## Tools required
 
-- `bash`, `jq`, mikefarah `yq` **v4** (the gate library rejects python-yq)
-- `pytest`, `ruff` — when `src/` exists
-- `behave` (or any Gherkin runner) — for `tests/features/*.feature`
+- `bash` **>= 4**, `jq`, mikefarah `yq` **v4** (the gate library rejects python-yq)
+- whatever your `project.yaml` commands call — for a Python project without
+  configured commands: `pytest`, `ruff`, `behave`
 
-Install: `winget install MikeFarah.yq jqlang.jq` (Windows), `brew install yq jq`
-(macOS). Python tools via `pip install behave pytest ruff`.
+Install: `winget install MikeFarah.yq jqlang.jq` (Windows, run gates in Git
+Bash), `brew install bash yq jq` (macOS — its /bin/bash is 3.2). Python tools via
+`pip install behave pytest ruff`.
+
+**Windows:** `init.sh` writes a `.gitattributes` that pins LF for `harness/**`
+and `*.feature`. Without it, git's default `core.autocrlf=true` checks the gate
+scripts out with CRLF and every gate dies on its first line.

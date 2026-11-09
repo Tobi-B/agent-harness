@@ -92,9 +92,13 @@ Per phase: **interview → draft → render → user_approves_in_chat → you_ma
 
 ### implement (per iteration)
 - TDD: failing test first, then minimum code to pass.
-- No `TODO`/`FIXME` in delivered code (gate enforces).
-- The gate FAILS if `pytest`/`ruff`/`behave` are needed but missing. Only the
-  user may decide to set `HARNESS_ALLOW_MISSING_TOOLS=1`.
+- The gate runs `commands.test|lint|acceptance` from `harness/project.yaml` in
+  the **project root** (the directory containing `harness/`), and scans
+  `source_dirs` for `TODO`/`FIXME` — comments included.
+- A Python project with a `pyproject.toml` may leave those commands empty
+  (pytest / ruff / behave are the fallback). Anything else must fill them in,
+  or the gate fails. Missing source, an empty command, and a missing tool all
+  FAIL; only the user may decide to set `HARNESS_ALLOW_MISSING_TOOLS=1`.
 
 ### verify (per iteration)
 - Fill `## Verification` in the iteration file, reporting on **every** story of

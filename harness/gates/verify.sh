@@ -18,23 +18,23 @@ ITER_MD="$DOCS_DIR/iterations/${iter}.md"
 grep -qF "## Verification" "$ITER_MD" \
   || fail "$ITER_MD missing '## Verification' section — record the gate results for $iter"
 
-# Each story in the iteration must be reported on in the Verification section.
-mapfile -t stories < <(plan_iteration_field "$iter" "stories[]")
-for s in "${stories[@]}"; do
-  awk -v s="$s" '
-    /^## Verification/ { inv=1; next }
-    /^## / && inv { inv=0 }
-    inv && index($0, s) { found=1 }
-    END { exit !found }
-  ' "$ITER_MD" || fail "$ITER_MD '## Verification' section does not report on story $s"
-done
-
-remaining=$(awk '
+# The Verification section only (CR-tolerant for Windows checkouts).
+section=$(awk '
+  { sub(/\r$/, "") }
   /^## Verification/ { inv=1; next }
   /^## / && inv { inv=0 }
-  inv && /^- \[ \]/ { n++ }
-  END { print n+0 }
+  inv
 ' "$ITER_MD")
+
+# Each story in the iteration must be reported on in the Verification section.
+# -w: US-001 must not be satisfied by a mention of US-0011.
+mapfile -t stories < <(plan_iteration_field "$iter" "stories[]")
+for s in "${stories[@]}"; do
+  grep -qwF "$s" <<<"$section" \
+    || fail "$ITER_MD '## Verification' section does not report on story $s"
+done
+
+remaining=$(grep -c '^- \[ \]' <<<"$section" || true)
 [ "$remaining" -eq 0 ] \
   || fail "$ITER_MD has $remaining unchecked '- [ ]' items under '## Verification'"
 

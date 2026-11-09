@@ -28,6 +28,7 @@ Those are normal project work, governed by their respective phase gates.
 
 | Version | Date | ADR | Summary |
 |---|---|---|---|
+| 7 | 2026-09-21 | meta-0006 *(proposed)* | Silent-pass holes closed: approval allowlist (`user`/`autopilot`; drafts, placeholders and template comments no longer count); implement gate runs in the project root with commands from project-owned `project.yaml` (Python default kept), TODO scan includes comments, no source / empty command fails; `advance.sh` only advances the current phase; autopilot finishes claimed iterations; SIGPIPE race in `advance.sh plan` fixed; Windows LF via `.gitattributes` + CR-tolerant parsing; bash >= 4 check. |
 | 6 | 2026-08-17 | meta-0005 | Auto mode widened: without auto the cycle is human-in-the-loop; with auto the agent runs every phase except `release` (which always waits for a human). Enabled from chat — the agent runs `autopilot.sh on` only on explicit user instruction; terminal requirement dropped. Expiry + iteration budget remain as the emergency brake. |
 | 5 | 2026-08-17 | meta-0004 | Trusted approval markers: `gates/signoff.sh` and the sha256 registry removed. An artifact is approved when it carries `approved_by: <who>` (frontmatter, or `# approved_by:` comment in `.feature` files), written by the agent only after the user approved in conversation. Design-render freshness by mtime instead of embedded hash. Autopilot marks iteration designs `approved_by: autopilot`. |
 | 0 | initial | — | 5-phase lean workflow, single source of truth in `workflow.yaml`. |

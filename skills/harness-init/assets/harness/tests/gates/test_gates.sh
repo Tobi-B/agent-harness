@@ -14,6 +14,9 @@ export HARNESS_ROOT="$FIXTURE"
 # The fixture has no src/ and no test tooling; iteration gates must not fail
 # on absent pytest/behave. Tool-strictness itself is tested explicitly below.
 export HARNESS_ALLOW_MISSING_TOOLS=1
+# Project root of the fixture: never let gates scan the real parent of $FIXTURE.
+export HARNESS_PROJECT_ROOT="$FIXTURE/project"
+mkdir -p "$HARNESS_PROJECT_ROOT"
 
 failures=0
 t() {
@@ -44,15 +47,15 @@ approve() {
   case "$f" in
     *.feature)
       if grep -q '^#[[:space:]]*approved_by:' "$f"; then
-        sed -i 's/^#[[:space:]]*approved_by:.*/# approved_by: tester/' "$f"
+        sed -i 's/^#[[:space:]]*approved_by:.*/# approved_by: user/' "$f"
       else
-        sed -i '1i # approved_by: tester' "$f"
+        sed -i '1i # approved_by: user' "$f"
       fi ;;
     *)
       if grep -q '^approved_by:' "$f"; then
-        sed -i 's/^approved_by:.*/approved_by: tester/' "$f"
+        sed -i 's/^approved_by:.*/approved_by: user/' "$f"
       else
-        sed -i '0,/^---$/s/^---$/---\napproved_by: tester/' "$f"
+        sed -i '0,/^---$/s/^---$/---\napproved_by: user/' "$f"
       fi ;;
   esac
 }
@@ -121,9 +124,34 @@ t       "has_frontmatter_field finds existing field"  has_frontmatter_field "$FI
 t_fails "has_frontmatter_field rejects missing field" has_frontmatter_field "$FIXTURE/docs/user_stories/US-001-test.md" "nope"
 t       "frontmatter_value extracts value" test "$(frontmatter_value "$FIXTURE/docs/user_stories/US-001-test.md" "status")" = "draft"
 t       "approved_by_of reads frontmatter marker" \
-  test "$(approved_by_of "$FIXTURE/docs/user_stories/US-001-test.md")" = "tester"
+  test "$(approved_by_of "$FIXTURE/docs/user_stories/US-001-test.md")" = "user"
 t       "approved_by_of reads feature comment marker" \
-  test "$(approved_by_of "$FIXTURE/tests/features/US-001-test.feature")" = "tester"
+  test "$(approved_by_of "$FIXTURE/tests/features/US-001-test.feature")" = "user"
+
+# v7: only 'user' / 'autopilot' count. Drafts and placeholders must NOT pass —
+# the story template itself ships 'approved_by:   # left empty in drafts ...'.
+# Subshell: require_approved calls fail(), which exits — not our test shell.
+approved() { ( require_approved "$1" ); }
+approval_fixture() { printf -- '---\nid: X\napproved_by: %s\n---\n' "$1" > "$FIXTURE/appr.md"; }
+for v in '' '""' 'TBD' 'pending' 'no' "            # left empty in drafts; the agent writes 'user' after approval in chat"; do
+  approval_fixture "$v"
+  t_fails "require_approved rejects placeholder [${v:0:20}]" approved "$FIXTURE/appr.md"
+done
+for v in 'user' 'autopilot' '"user"' 'user (2026-09-21)' 'user  # approved in chat'; do
+  approval_fixture "$v"
+  t "require_approved accepts [${v}]" approved "$FIXTURE/appr.md"
+done
+# A '# approved_by:' line counts only in .feature files, not in markdown bodies.
+# shellcheck disable=SC2016  # literal backticks: a fenced code block
+printf -- '---\nid: X\n---\n```\n# approved_by: user\n```\n' > "$FIXTURE/appr.md"
+t_fails "comment marker ignored outside .feature files" approved "$FIXTURE/appr.md"
+# Windows checkout: CRLF must not hide a marker.
+printf -- '---\r\nid: X\r\napproved_by: user\r\n---\r\n' > "$FIXTURE/appr.md"
+t "CRLF frontmatter marker is read" approved "$FIXTURE/appr.md"
+printf -- '# approved_by: user\r\nFeature: x\r\n' > "$FIXTURE/appr.feature"
+t "CRLF feature marker is read" approved "$FIXTURE/appr.feature"
+rm -f "$FIXTURE/appr.md" "$FIXTURE/appr.feature"
+t "rel_to_root is portable" test "$(rel_to_root "$FIXTURE/docs/x.md")" = "docs/x.md"
 
 # --- discover: approval markers ----------------------------------------------
 
@@ -156,6 +184,10 @@ t "advance discover" advance discover
 t "discover gate_passed recorded" test "$(status '.phases.discover.gate_passed')" = "true"
 t "current_phase is architect"     test "$(status '.current_phase')" = "architect"
 t "audit file written"             test -n "$(find "$FIXTURE/audit" -name 'discover-*.md' -print -quit)"
+
+t_fails "advance refuses a phase that is not current" advance model
+t_fails "advance refuses to re-advance a passed phase" advance discover
+t "re-advance left the phase alone" test "$(status '.current_phase')" = "architect"
 
 # --- architect ---------------------------------------------------------------
 
@@ -244,6 +276,11 @@ write_plan "  - id: ITER-01
     stories: [US-002]"
 t_fails "plan fails without approval" bash "$GATES_DIR/plan.sh"
 approve "docs/plan.md"
+# v7 regression: first_iteration_id used `| head -1` under pipefail and died
+# with SIGPIPE (exit 141) in ~40% of calls. One call proves nothing; 50 do.
+t "first_iteration_id is stable under pipefail (50 calls)" bash -c "
+  . '$GATES_DIR/_lib.sh'
+  for i in \$(seq 1 50); do [ \"\$(first_iteration_id)\" = ITER-01 ] || exit 1; done"
 t "advance plan" advance plan
 t "plan opened iteration cycle at ITER-01" test "$(status '.current_iteration')" = "ITER-01"
 t "current_phase is design"                test "$(status '.current_phase')" = "design"
@@ -408,6 +445,95 @@ t_fails "advance still needs a human when autopilot is off" \
 t_fails "implement fails on missing tools without opt-out" \
   env HARNESS_ALLOW_MISSING_TOOLS=0 PATH="/usr/bin:/bin" \
       HARNESS_ROOT="$FIXTURE" bash "$GATES_DIR/implement.sh"
+
+# t_msg: expect failure AND a specific message — so a test cannot pass because
+# something unrelated broke first (e.g. yq missing from a trimmed PATH).
+t_msg() {
+  local name="$1" pattern="$2"; shift 2
+  local out
+  if out=$("$@" 2>&1); then
+    echo "FAIL $name (expected non-zero exit)"; failures=$((failures + 1))
+  elif grep -q -- "$pattern" <<<"$out"; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name (wrong reason: $(tail -1 <<<"$out"))"; failures=$((failures + 1))
+  fi
+}
+
+# --- v7: autopilot finishes the iterations it claimed -----------------------
+
+yq -i '.current_phase = "implement" | .current_iteration = "ITER-01"' "$FIXTURE/status.yaml"
+autopilot_on --expires 4h --max-iterations 1
+t "claimed iteration can finish on a spent budget" bash -c "
+  . '$GATES_DIR/_lib.sh'
+  autopilot_claim_iteration ITER-01
+  autopilot_active_for implement && autopilot_active_for verify"
+yq -i '.current_iteration = "ITER-02"' "$FIXTURE/status.yaml"
+t_fails "an unclaimed iteration still needs budget" bash -c "
+  . '$GATES_DIR/_lib.sh'; autopilot_active_for design"
+yq -i '.autopilot.expires_at = "2020-01-01T00:00:00Z"' "$FIXTURE/status.yaml"
+yq -i '.current_iteration = "ITER-01"' "$FIXTURE/status.yaml"
+t_fails "expiry stops even a claimed iteration" bash -c "
+  . '$GATES_DIR/_lib.sh'; autopilot_active_for implement"
+autopilot off >/dev/null
+
+# --- v7: implement gate — project root, configured commands, no silent pass --
+
+IMP="$(mktemp -d)"
+cp -r "$FIXTURE/." "$IMP/"
+yq -i '.current_iteration = "ITER-01" | .iterations.ITER-01.design.gate_passed = true' "$IMP/status.yaml"
+IMP_PROJ="$IMP/proj"; mkdir -p "$IMP_PROJ"
+imp() { env HARNESS_ROOT="$IMP" HARNESS_PROJECT_ROOT="$IMP_PROJ" HARNESS_ALLOW_MISSING_TOOLS="${ALLOW:-0}" \
+          bash "$GATES_DIR/implement.sh"; }
+imp_allow() { ALLOW=1 imp; }
+cfg() { cat > "$IMP/project.yaml"; }
+
+cfg <<'EOF'
+source_dirs: [src]
+commands: { test: "", lint: "", acceptance: "" }
+EOF
+t_msg "implement fails when there is no source" "no source found" imp
+mkdir -p "$IMP_PROJ/src"; echo 'int main() { return 0; }' > "$IMP_PROJ/src/main.cpp"
+t_msg "implement fails on unconfigured commands (no silent pass)" "no 'test' command configured" imp
+t "unconfigured commands pass only with explicit opt-out" imp_allow
+
+cfg <<'EOF'
+source_dirs: [src]
+commands:
+  test: test -f src/main.cpp
+  lint: "true"
+  acceptance: ls harness_marker_absent_is_fine >/dev/null 2>&1 || true
+EOF
+t "commands run from the project root and pass" imp
+
+cfg <<'EOF'
+source_dirs: [src]
+commands: { test: "false", lint: "true", acceptance: "true" }
+EOF
+t_msg "a failing command fails the gate" "'test' failed" imp
+t_msg "a failing command is never downgraded by the opt-out" "'test' failed" imp_allow
+
+cfg <<'EOF'
+source_dirs: [src]
+commands: { test: "true", lint: "true", acceptance: "true" }
+EOF
+echo '  x = 1;  // TODO remove' >> "$IMP_PROJ/src/main.cpp"
+t_msg "TODO in a comment fails the gate" "TODO/FIXME" imp
+echo 'todo_check: false' >> "$IMP/project.yaml"
+t "todo_check: false disables the scan" imp
+sed -i '/TODO/d' "$IMP_PROJ/src/main.cpp"
+
+cfg <<'EOF'
+source_dirs: [src]
+commands: { test: "CI=1 true", lint: "true", acceptance: "true" }
+EOF
+t "leading VAR=value in a command is not mistaken for the tool" imp
+cfg <<'EOF'
+source_dirs: [src]
+commands: { test: "definitely-not-a-tool --run", lint: "true", acceptance: "true" }
+EOF
+t_msg "missing tool is named in the failure" "needs 'definitely-not-a-tool'" imp
+rm -rf "$IMP"
 
 # -----------------------------------------------------------------------------
 

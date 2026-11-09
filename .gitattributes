@@ -1,0 +1,7 @@
+
+# lean harness: keep LF — gates are bash and parse these files line by line
+harness/** text eol=lf
+*.feature text eol=lf
+AGENTS.md text eol=lf
+.claude/commands/*.md text eol=lf
+.opencode/command/*.md text eol=lf

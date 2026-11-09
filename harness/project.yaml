@@ -1,0 +1,34 @@
+# Project commands for the implement gate — owned by THIS project.
+#
+# Not part of the workflow contract: editing this file is normal project work
+# and needs no meta ADR. Commands run from the project root (the directory
+# that contains harness/). A failing command fails the gate; an EMPTY command
+# fails it too (unless HARNESS_ALLOW_MISSING_TOOLS=1), so a gate can never
+# pass just because nobody configured the tests.
+#
+# Python projects with a pyproject.toml may leave commands empty: the gate
+# then uses pytest -q / ruff check . / behave harness/tests/features.
+
+source_dirs: [src]      # where delivered code lives (TODO/FIXME scan + existence check)
+todo_check: true        # fail on TODO/FIXME in source_dirs, comments included
+
+commands:
+  test: ""              # unit tests
+  lint: ""              # lint / format / type check — chain with && if several
+  acceptance: ""        # runs harness/tests/features/*.feature
+
+# Examples
+#
+# JUCE / C++ (CMake + Catch2, cucumber-cpp or a Catch2 BDD runner):
+#   source_dirs: [Source]
+#   commands:
+#     test:       cmake --build build --target tests && ctest --test-dir build --output-on-failure
+#     lint:       clang-format --dry-run --Werror Source/*.cpp Source/*.h
+#     acceptance: ctest --test-dir build -L acceptance --output-on-failure
+#
+# TypeScript / React:
+#   source_dirs: [src]
+#   commands:
+#     test:       npx vitest run
+#     lint:       npx eslint src && npx tsc --noEmit
+#     acceptance: npx cucumber-js harness/tests/features

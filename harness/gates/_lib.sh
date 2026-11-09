@@ -10,12 +10,24 @@
 # written by the agent only after the user has approved in conversation.
 set -euo pipefail
 
+# Gates use bash 4 features (mapfile, [[ =~ ]]). macOS ships bash 3.2 as
+# /bin/bash; fail with the fix instead of a cryptic "mapfile: not found".
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  echo "FAIL: gates need bash >= 4 (found ${BASH_VERSION:-unknown}) — macOS: brew install bash" >&2
+  exit 2
+fi
+
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 STATUS_FILE="$HARNESS_ROOT/status.yaml"
 WORKFLOW_FILE="$HARNESS_ROOT/workflow.yaml"
 AUDIT_DIR="$HARNESS_ROOT/audit"
 # shellcheck disable=SC2034  # used by sourcing gate scripts
 DOCS_DIR="$HARNESS_ROOT/docs"
+# The project the harness governs lives one level ABOVE harness/: that is
+# where src/, pyproject.toml, package.json, CMakeLists.txt etc. are. Override
+# for unusual layouts (and for the self-tests' fixture).
+PROJECT_ROOT="${HARNESS_PROJECT_ROOT:-$(cd "$HARNESS_ROOT/.." && pwd)}"
+PROJECT_FILE="$HARNESS_ROOT/project.yaml"
 GATE_NAME="${GATE_NAME:-$(basename "${BASH_SOURCE[1]:-unknown}" .sh)}"
 
 # A terminal opened before yq/jq were installed keeps the PATH it inherited at
@@ -67,11 +79,7 @@ require jq
 
 # python-yq (kislyuk) has incompatible syntax; gates need mikefarah yq v4.
 if ! yq --version 2>/dev/null | grep -q "mikefarah"; then
-  {
-    echo "FAIL: the 'yq' found at $(command -v yq) is not mikefarah yq v4."
-    echo "  python-yq (kislyuk) uses incompatible syntax and will not work."
-    echo "  install: $(install_hint)"
-  } >&2
+  echo "FAIL: 'yq' in PATH is not mikefarah yq v4 (https://github.com/mikefarah/yq)" >&2
   exit 2
 fi
 
@@ -131,8 +139,12 @@ duration_to_seconds() {
 }
 
 # Path relative to HARNESS_ROOT — the canonical form used in status.yaml.
+# Pure bash: GNU `realpath --relative-to` does not exist on macOS.
 rel_to_root() {
-  realpath --relative-to="$HARNESS_ROOT" "$1"
+  case "$1" in
+    "$HARNESS_ROOT"/*) echo "${1#"$HARNESS_ROOT"/}" ;;
+    *) echo "$1" ;;
+  esac
 }
 
 has_frontmatter_field() {
@@ -142,6 +154,7 @@ has_frontmatter_field() {
   # awk gotcha where `exit 0` in a rule still runs END (whose exit overrides).
   awk -v field="$field" '
     BEGIN { in_fm=0; found=0 }
+    { sub(/\r$/, "") }
     /^---$/ { if (in_fm) exit; in_fm=1; next }
     in_fm && index($0, field ":") == 1 { found=1; exit }
     END { exit !found }
@@ -153,6 +166,7 @@ frontmatter_value() {
   local field="$2"
   awk -v field="$field" '
     BEGIN { in_fm=0 }
+    { sub(/\r$/, "") }
     /^---$/ { if (in_fm) exit; in_fm=1; next }
     in_fm && index($0, field ":") == 1 {
       val = substr($0, length(field) + 2)
@@ -193,7 +207,7 @@ require_gate_passed() {
 PLAN_FILE="$DOCS_DIR/plan.md"
 
 frontmatter_yaml() {
-  awk '/^---[[:space:]]*$/ { n++; next } n == 1' "$1"
+  awk '{ sub(/\r$/, "") } /^---[[:space:]]*$/ { n++; next } n == 1' "$1"
 }
 
 plan_iteration_ids() {
@@ -217,8 +231,15 @@ next_iteration_id() {
   return 0
 }
 
+# No `| head -1`: under pipefail, head closing the pipe early SIGPIPEs the
+# writer (exit 141) — advance.sh plan then died silently after "PASS: plan"
+# in roughly 40% of runs. Ask yq for the first element instead.
 first_iteration_id() {
-  plan_iteration_ids | head -1
+  [ -f "$PLAN_FILE" ] || return 0
+  local id
+  id=$(frontmatter_yaml "$PLAN_FILE" | yq '.iterations[0].id // ""')
+  [ "$id" = "null" ] && id=""
+  echo "$id"
 }
 
 current_iteration() {
@@ -258,21 +279,39 @@ require_iteration_gate_passed() {
 # hash: if an approved artifact changes materially afterwards, ask the user
 # again and refresh the marker.
 
+# Only two values count: `user` and `autopilot` (optionally followed by a note,
+# e.g. `user (2026-09-21)`). Anything else — empty, `""`, `TBD`, `pending`, or
+# a template's inline `# comment` — is a DRAFT, not an approval. An allowlist
+# rather than "non-empty": agents like placeholders, and a placeholder that
+# silently counts as approval defeats the harness at its core.
 approved_by_of() {
   local file="$1" val
   val=$(frontmatter_value "$file" "approved_by")
-  if [ -z "$val" ]; then
-    val=$(sed -n 's/^#[[:space:]]*approved_by:[[:space:]]*//p' "$file" | head -1)
+  if [ -z "$val" ] && [[ "$file" == *.feature ]]; then
+    val=$(sed -n '/^#[[:space:]]*approved_by:/{s/^#[[:space:]]*approved_by:[[:space:]]*//;s/\r$//;p;q;}' "$file")
   fi
+  val="${val%%#*}"                        # drop inline YAML comment
+  val="${val//\"/}"; val="${val//\'/}"     # drop quotes
+  val="${val#"${val%%[![:space:]]*}"}"    # trim
+  val="${val%"${val##*[![:space:]]}"}"
   echo "$val"
+}
+
+approval_is_valid() {
+  case "$1" in
+    user|autopilot|"user "*|"autopilot "*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 require_approved() {
   local file="$1" rel who
   rel=$(rel_to_root "$file")
   who=$(approved_by_of "$file")
-  [ -n "$who" ] && [ "$who" != "null" ] \
+  [ -n "$who" ] \
     || fail "$rel is not approved — after the user approves, add 'approved_by: user' to its frontmatter (or a '# approved_by: user' comment in a .feature file)"
+  approval_is_valid "$who" \
+    || fail "$rel has 'approved_by: $who' — only 'user' or 'autopilot' count as approval; anything else is a draft"
 }
 
 # --- autopilot ---------------------------------------------------------------
@@ -297,10 +336,9 @@ autopilot_phase_in_scope() {
   esac
 }
 
-# Prints the reason it is NOT usable, and returns non-zero. Silent + zero when
-# it is. Callers use the reason verbatim in their messages.
-autopilot_enabled_and_valid() {
-  local enabled expires_at used maxi now exp
+# On and not expired — ignores the budget. Prints the reason when not.
+autopilot_on_and_unexpired() {
+  local enabled expires_at now exp
   enabled=$(autopilot_field enabled)
   if [ "$enabled" != "true" ]; then
     echo "autopilot is off"
@@ -320,6 +358,14 @@ autopilot_enabled_and_valid() {
       return 1
     fi
   fi
+  return 0
+}
+
+# Prints the reason it is NOT usable, and returns non-zero. Silent + zero when
+# it is. Callers use the reason verbatim in their messages.
+autopilot_enabled_and_valid() {
+  local used maxi
+  autopilot_on_and_unexpired || return 1
 
   used=$(autopilot_field iterations_used)
   maxi=$(autopilot_field max_iterations)
@@ -333,17 +379,27 @@ autopilot_enabled_and_valid() {
   return 0
 }
 
-# Is autopilot usable for THIS phase right now?
+# Is autopilot usable for THIS phase right now? The budget counts ITERATIONS:
+# once an iteration is claimed, autopilot finishes it (design → implement →
+# verify) even when that claim used the last unit of budget. Otherwise
+# --max-iterations N would strand iteration N after its design phase.
 autopilot_active_for() {
-  local phase="$1"
+  local phase="$1" iter
   autopilot_phase_in_scope "$phase" || return 1
+  if [ "$(phase_scope "$phase")" = "iteration" ]; then
+    iter=$(current_iteration)
+    if [ -n "$iter" ] && autopilot_iteration_claimed "$iter"; then
+      autopilot_on_and_unexpired >/dev/null 2>&1
+      return
+    fi
+  fi
   autopilot_enabled_and_valid >/dev/null 2>&1
 }
 
 # Has this iteration already been charged against the budget?
 autopilot_iteration_claimed() {
   local iter="$1"
-  [ "$(yq ".autopilot.iterations_claimed[]? | select(. == \"$iter\")" "$STATUS_FILE" 2>/dev/null | head -1)" = "$iter" ]
+  [ "$(yq ".autopilot.iterations_claimed // [] | any_c(. == \"$iter\")" "$STATUS_FILE" 2>/dev/null)" = "true" ]
 }
 
 print_autopilot_status() {
@@ -361,6 +417,20 @@ print_autopilot_status() {
   echo "  iterations_used:    $(autopilot_field iterations_used) / $(autopilot_field max_iterations)"
   echo "  iterations_claimed: $(yq -o=json '.autopilot.iterations_claimed // []' "$STATUS_FILE" | jq -r 'join(", ") | if . == "" then "-" else . end')"
   echo "  enabled_by:         $(autopilot_field enabled_by)"
+}
+
+# --- project config (harness/project.yaml) --------------------------------
+#
+# Project-owned, NOT part of the workflow contract: which commands the
+# implement gate runs. Editing it is normal project work (no meta ADR).
+
+project_cfg() {
+  [ -f "$PROJECT_FILE" ] || { echo ""; return 0; }
+  local v
+  # No `// ""` here: yq's alternative operator also swallows `false`.
+  v=$(yq "$1" "$PROJECT_FILE")
+  [ "$v" = "null" ] && v=""
+  echo "$v"
 }
 
 # --- mutations below: ONLY for advance.sh / autopilot.sh ---

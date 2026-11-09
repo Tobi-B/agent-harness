@@ -45,6 +45,10 @@ the harness at its core; nothing else in this file matters more than this.
 The single exception is `approved_by: autopilot`, and only while the user has
 enabled auto mode (see below).
 
+Only those two values count. The gates treat anything else — an empty field,
+`""`, `TBD`, `pending`, a leftover template comment — as a **draft**. Leave the
+field empty in drafts; do not invent placeholder values.
+
 ## Auto mode — only if the user asked for it
 
 Two modes exist. **Without auto** this is a human-in-the-loop development
@@ -79,8 +83,19 @@ Do not advance if a gate fails.
 
 Phase and iteration transitions happen only via
 `bash harness/gates/advance.sh <phase>` (runs the gate, writes
-`harness/audit/<phase>-<timestamp>.md`, updates `status.yaml`). The user runs
-it; you may pass `--yes` only when the user explicitly told you to advance.
+`harness/audit/<phase>-<timestamp>.md`, updates `status.yaml`). It advances the
+**current** phase only. The user runs it; you may pass `--yes` only when the
+user explicitly told you to advance.
+
+## Project commands
+
+`harness/project.yaml` tells the `implement` gate where the code lives
+(`source_dirs`) and how to test, lint and run the acceptance features
+(`commands.test`, `commands.lint`, `commands.acceptance`). Commands run from
+the project root. Fill it in during `architect`, once the stack is decided,
+and confirm the commands with the user. It is project-owned: editing it needs
+no meta ADR. An empty command fails the gate — never set one to `true` to make
+the gate pass; that is the same kind of lie as a fabricated approval.
 
 ## Show designs before asking for approval
 
@@ -123,10 +138,13 @@ ADR, user approval, version bump. Do not edit `workflow.yaml` ad-hoc.
 
 ## Tools
 
-- `bash`, `jq`, mikefarah `yq` v4 — required for gates (python-yq is rejected)
-- `pytest`, `ruff` — required when `src/` exists (missing tools FAIL the
-  implement gate unless `HARNESS_ALLOW_MISSING_TOOLS=1`)
-- `behave` (or any Gherkin runner) — for `harness/tests/features/*.feature`
+- `bash` >= 4, `jq`, mikefarah `yq` v4 — required for gates (python-yq is rejected)
+- whatever the `project.yaml` commands call; a Python project with
+  `pyproject.toml` and no configured commands defaults to `pytest`, `ruff`,
+  `behave`
+- missing tools or unconfigured commands FAIL the implement gate unless
+  `HARNESS_ALLOW_MISSING_TOOLS=1`
 
-Install with `winget install MikeFarah.yq jqlang.jq` (Windows),
-`brew install yq jq` (macOS). Python tools via `pip install behave pytest ruff`.
+Install with `winget install MikeFarah.yq jqlang.jq` (Windows, gates run in Git
+Bash), `brew install bash yq jq` (macOS). Python tools via
+`pip install behave pytest ruff`.

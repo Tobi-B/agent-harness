@@ -31,6 +31,17 @@ known=$(yq ".phases[] | select(.id == \"$phase\") | .id" "$WORKFLOW_FILE")
 
 [ -f "$SCRIPT_DIR/$phase.sh" ] || fail "no gate script gates/$phase.sh"
 
+# Only the CURRENT phase can be advanced. Advancing an earlier phase whose gate
+# still passes would rewind current_phase and wipe current_iteration; advancing
+# a later one would skip work. Reopening a phase is a deliberate, manual edit.
+current=$(yq '.current_phase' "$STATUS_FILE")
+[ "$phase" = "$current" ] \
+  || fail "'$phase' is not the current phase (current_phase: $current) — only the current phase can be advanced"
+if [ "$(phase_scope "$phase")" = "once" ] \
+   && [ "$(yq ".phases.${phase}.gate_passed // false" "$STATUS_FILE")" = "true" ]; then
+  fail "phase '$phase' has already passed its gate"
+fi
+
 scope=$(phase_scope "$phase")
 iter=""
 if [ "$scope" = "iteration" ]; then

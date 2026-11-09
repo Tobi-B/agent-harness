@@ -2,9 +2,16 @@
 # Pure check — no state mutation. Advance via gates/advance.sh implement.
 #
 # Iteration-scoped: implements the design approved for the current iteration.
-# Missing test/lint tools FAIL the gate: a quality gate that passes because
-# the test runner is absent is a hole. Set HARNESS_ALLOW_MISSING_TOOLS=1 to
-# downgrade missing tools to warnings (explicit opt-out, e.g. docs-only repos).
+#
+# Stack-neutral: the commands come from harness/project.yaml (test, lint,
+# acceptance) and run from the PROJECT root — the directory that contains
+# harness/, not harness/ itself. A Python project with pyproject.toml and no
+# configured commands falls back to pytest / ruff / behave.
+#
+# No silent passes: a missing source directory, an unconfigured command, or an
+# absent tool FAILS the gate. HARNESS_ALLOW_MISSING_TOOLS=1 downgrades those to
+# warnings (explicit opt-out, e.g. docs-only repos). A command that runs and
+# fails is never downgraded.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE_NAME="implement"
@@ -14,54 +21,94 @@ GATE_NAME="implement"
 iter=$(require_current_iteration)
 require_iteration_gate_passed "$iter" design
 
+FEATURES_DIR="$HARNESS_ROOT/tests/features"
+
 # Every story in this iteration must have its executable acceptance contract.
 mapfile -t stories < <(plan_iteration_field "$iter" "stories[]")
 for s in "${stories[@]}"; do
-  [ -n "$(find "$HARNESS_ROOT/tests/features" -maxdepth 1 -name "${s}*.feature" -print -quit 2>/dev/null)" ] \
-    || fail "story $s (iteration $iter) has no tests/features/${s}*.feature"
+  [ -f "$FEATURES_DIR/${s}.feature" ] \
+    || [ -n "$(find "$FEATURES_DIR" -maxdepth 1 -name "${s}-*.feature" -print -quit 2>/dev/null)" ] \
+    || fail "story $s (iteration $iter) has no tests/features/${s}-*.feature"
 done
 
-tool_or_fail() {
-  local tool="$1"
-  if command -v "$tool" >/dev/null 2>&1; then
+soft_fail() {
+  if [ "${HARNESS_ALLOW_MISSING_TOOLS:-0}" = "1" ]; then
+    warn "$* — skipped (HARNESS_ALLOW_MISSING_TOOLS=1)"
     return 0
   fi
-  if [ "${HARNESS_ALLOW_MISSING_TOOLS:-0}" = "1" ]; then
-    warn "tool '$tool' not available, skipping (HARNESS_ALLOW_MISSING_TOOLS=1)"
-    return 1
-  fi
-  fail "tool '$tool' required but not in PATH (set HARNESS_ALLOW_MISSING_TOOLS=1 to skip explicitly)"
+  fail "$* (set HARNESS_ALLOW_MISSING_TOOLS=1 to skip explicitly)"
 }
 
-if [ -d "$HARNESS_ROOT/src" ] || [ -f "$HARNESS_ROOT/pyproject.toml" ]; then
-  if tool_or_fail pytest; then
-    pytest -q || fail "pytest failed"
-  fi
+# --- which commands? ----------------------------------------------------------
+is_python=0
+[ -f "$PROJECT_ROOT/pyproject.toml" ] && is_python=1
 
-  if tool_or_fail ruff; then
-    ruff check "$HARNESS_ROOT/src" "$HARNESS_ROOT/tests" 2>/dev/null \
-      || fail "ruff found lint issues"
+cmd_for() {
+  local kind="$1" cmd
+  cmd=$(project_cfg ".commands.$kind")
+  if [ -z "$cmd" ] && [ "$is_python" = "1" ]; then
+    case "$kind" in
+      test)       cmd="pytest -q" ;;
+      lint)       cmd="ruff check ." ;;
+      acceptance) cmd="behave harness/tests/features --no-capture --no-color" ;;
+    esac
   fi
+  echo "$cmd"
+}
 
-  todo_files=$(grep -rEn "^[^#]*\b(TODO|FIXME)\b" "$HARNESS_ROOT/src" 2>/dev/null \
-    | grep -v "__pycache__" || true)
-  [ -z "$todo_files" ] || fail "TODO/FIXME in src: $todo_files"
+run_cmd() {
+  local kind="$1" cmd tool log
+  cmd=$(cmd_for "$kind")
+  if [ -z "$cmd" ]; then
+    soft_fail "no '$kind' command configured in harness/project.yaml (commands.$kind)"
+    return 0
+  fi
+  # First word of the command, skipping leading VAR=value assignments.
+  tool="$cmd"
+  while [[ "$tool" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+(.*)$ ]]; do
+    tool="${BASH_REMATCH[1]}"
+  done
+  tool="${tool%% *}"
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    soft_fail "'$kind' command needs '$tool', which is not in PATH"
+    return 0
+  fi
+  echo "run [$kind]: $cmd"
+  log=$(mktemp)
+  if ! (cd "$PROJECT_ROOT" && bash -c "$cmd") >"$log" 2>&1; then
+    tail -40 "$log" >&2
+    rm -f "$log"
+    fail "'$kind' failed: $cmd"
+  fi
+  tail -3 "$log"
+  rm -f "$log"
+}
+
+# --- source must exist --------------------------------------------------------
+mapfile -t src_dirs < <(project_cfg '.source_dirs[]')
+[ "${#src_dirs[@]}" -gt 0 ] || src_dirs=(src)
+
+existing=()
+for d in "${src_dirs[@]}"; do
+  [ -d "$PROJECT_ROOT/$d" ] && existing+=("$PROJECT_ROOT/$d")
+done
+
+if [ "${#existing[@]}" -eq 0 ]; then
+  soft_fail "no source found in ${src_dirs[*]} under $PROJECT_ROOT — set source_dirs in harness/project.yaml"
 else
-  echo "INFO: no src/ or pyproject.toml detected; skipping test/lint/TODO gates"
-fi
-
-behave_dir="$HARNESS_ROOT/tests/features"
-if [ -d "$behave_dir" ] && [ -n "$(find "$behave_dir" -maxdepth 1 -name '*.feature' -print -quit)" ]; then
-  if tool_or_fail behave; then
-    behave_log=$(mktemp)
-    if ! behave "$behave_dir" --no-capture --no-color >"$behave_log" 2>&1; then
-      tail -40 "$behave_log" >&2
-      rm -f "$behave_log"
-      fail "behave reported failures"
-    fi
-    tail -5 "$behave_log"
-    rm -f "$behave_log"
+  # Comments included: that is where TODO/FIXME markers live.
+  if [ "$(project_cfg '.todo_check')" != "false" ]; then
+    todo_hits=$(grep -rInE '\b(TODO|FIXME)\b' "${existing[@]}" \
+      --exclude-dir=node_modules --exclude-dir=__pycache__ --exclude-dir=.git \
+      --exclude-dir=build --exclude-dir=dist --exclude-dir=target \
+      --exclude-dir=.venv --exclude-dir=venv 2>/dev/null | head -20 || true)
+    [ -z "$todo_hits" ] || fail "TODO/FIXME in delivered code:
+$todo_hits"
   fi
 fi
+
+run_cmd test
+run_cmd lint
+run_cmd acceptance
 
 pass

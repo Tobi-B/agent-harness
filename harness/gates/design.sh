@@ -29,7 +29,7 @@ grep -q '^[[:space:]]*```mermaid' "$ITER_MD" \
 # Stories named in the plan for this iteration must be referenced by the design.
 mapfile -t stories < <(plan_iteration_field "$iter" "stories[]")
 for s in "${stories[@]}"; do
-  grep -qF "$s" "$ITER_MD" || fail "$ITER_MD does not reference story $s from the plan"
+  grep -qwF "$s" "$ITER_MD" || fail "$ITER_MD does not reference story $s from the plan"
 done
 
 RENDER_CMD="bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o $ITER_HTML --title '$iter Design' $ITER_MD"

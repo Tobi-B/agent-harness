@@ -27,7 +27,11 @@ user-approved artifacts. Full agent contract: `AGENTS.md` (root) and
    approved that artifact in this conversation — never pre-fill it, never
    infer it from silence. On material edits after approval: re-ask first.
 
-5. **Advance only with the user.** `bash harness/gates/advance.sh <phase>` is
+5. **Project commands.** From `architect` on, `harness/project.yaml` must name
+   the real test / lint / acceptance commands for this stack (confirm with the
+   user). Never stub one with `true` to get past the `implement` gate.
+
+6. **Advance only with the user.** `bash harness/gates/advance.sh <phase>` is
    the user's action; pass `--yes` only when they explicitly told you to
    advance. Never advance past a failing gate.
 

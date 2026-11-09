@@ -1,4 +1,4 @@
-version: 6
+version: 7
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
@@ -150,18 +150,19 @@ phases:
       - run_tests_and_lint
       - use_idempotency_keys_per_architecture_md   # convention; reviewed, not machine-checked
     produces:
-      - src/**
-      - tests/**
+      - <project>/<source_dirs>/**   # source_dirs from project.yaml, default src
+      - tests
     gate:
       run: gates/implement.sh
       checks:
         - iteration_design_gate_passed
         - every_iteration_story_has_a_feature_file
-        - pytest_passes_when_src_exists
-        - ruff_clean_when_src_exists
-        - no_todo_fixme_in_src
-        - behave_passes_on_feature_files
-        - missing_tools_fail_gate_unless_explicitly_allowed
+        - source_exists_in_project_source_dirs
+        - no_todo_fixme_in_source_including_comments
+        - project_test_command_passes            # project.yaml commands.test; pytest -q for Python by default
+        - project_lint_command_passes            # commands.lint; ruff check . for Python by default
+        - project_acceptance_command_passes      # commands.acceptance; behave for Python by default
+        - unconfigured_command_or_missing_tool_fails_unless_explicitly_allowed
     audit: audit/implement-*.md
     next: verify
 
@@ -209,8 +210,8 @@ phases:
 
 agent:
   loop: interview -> draft -> render -> user_approves_in_chat -> agent_marks_approved_by -> run_gate -> user_advances
-  approval_marker: "approved_by: <who>"   # frontmatter in .md, '# approved_by:' comment in .feature — written by the agent ONLY after the user approved in conversation
-  advance_tool: gates/advance.sh    # run by the USER; agent may run it only with --yes on explicit instruction
+  approval_marker: "approved_by: user | autopilot"   # frontmatter in .md, '# approved_by:' comment in .feature — written by the agent ONLY after the user approved in conversation
+  advance_tool: gates/advance.sh    # run by the USER; agent may run it only with --yes on explicit instruction; advances the CURRENT phase only
   autopilot_tool: gates/autopilot.sh  # agent runs it ONLY on the user's explicit chat instruction
   render_tool: ~/.claude/skills/mermaid-render/render.sh
   user_in_the_loop_required_for:
@@ -229,7 +230,7 @@ autopilot:
   never: [release]
   enable: gates/autopilot.sh on [--expires 8h] [--max-iterations 3]   # agent runs it only on explicit user instruction
   disable: gates/autopilot.sh off
-  bounded_by: [expires_at, max_iterations]
+  bounded_by: [expires_at, max_iterations]   # a claimed iteration is finished even on a spent budget; expiry always stops
   auto_approval_marks: "approved_by: autopilot"
   status_file: status.yaml
   audit_dir: audit/

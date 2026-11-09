@@ -41,7 +41,8 @@ for id in "${iters[@]}"; do
   [ "${#stories[@]}" -gt 0 ] || fail "$id lists no stories in plan.md"
 
   for s in "${stories[@]}"; do
-    [ -n "$(find "$STORIES_DIR" -maxdepth 1 -name "${s}*.md" -print -quit 2>/dev/null)" ] \
+    [ -f "$STORIES_DIR/${s}.md" ] \
+      || [ -n "$(find "$STORIES_DIR" -maxdepth 1 -name "${s}-*.md" -print -quit 2>/dev/null)" ] \
       || fail "$id references story '$s' but no $STORIES_DIR/${s}*.md exists"
     covered="$covered $s"
   done

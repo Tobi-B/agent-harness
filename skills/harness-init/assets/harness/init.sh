@@ -59,7 +59,8 @@ mkdir -p "$target/harness"
 # --- machinery: copied verbatim ----------------------------------------------
 cp -r "$SRC_ROOT/gates"     "$target/harness/"
 cp -r "$SRC_ROOT/templates" "$target/harness/"
-cp    "$SRC_ROOT/workflow.yaml" "$SRC_ROOT/dor_dod.yaml" "$SRC_ROOT/README.md" "$target/harness/"
+cp    "$SRC_ROOT/workflow.yaml" "$SRC_ROOT/dor_dod.yaml" "$SRC_ROOT/README.md" \
+      "$SRC_ROOT/project.yaml" "$target/harness/"
 cp    "$SRC_ROOT/init.sh"   "$target/harness/"
 if [ -d "$SRC_ROOT/glue" ]; then
   cp -r "$SRC_ROOT/glue" "$target/harness/"
@@ -119,6 +120,26 @@ fi
 sed -i "s|^# Agent Instructions (portable)|# Agent Instructions — ${name}|" \
   "$target/AGENTS.md" 2>/dev/null || true
 
+# --- line endings --------------------------------------------------------------
+# Gates are bash and parse frontmatter line by line. With Windows' default
+# core.autocrlf=true, a CRLF checkout breaks every script ("pipefail\r: invalid
+# option") and hides every approval marker. Pin LF for everything the gates read.
+# Also normalise what we just copied, in case the skill itself arrived as CRLF.
+find "$target/harness" -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.md' -o -name '*.template*' \) \
+  -exec sed -i 's/\r$//' {} + 2>/dev/null || true
+
+if ! grep -qs 'lean harness: keep LF' "$target/.gitattributes"; then
+  cat >> "$target/.gitattributes" <<'EOF'
+
+# lean harness: keep LF — gates are bash and parse these files line by line
+harness/** text eol=lf
+*.feature text eol=lf
+AGENTS.md text eol=lf
+.claude/commands/*.md text eol=lf
+.opencode/command/*.md text eol=lf
+EOF
+fi
+
 # --- git ----------------------------------------------------------------------
 if [ "$do_git" -eq 1 ]; then
   if [ -d "$target/.git" ]; then
@@ -127,11 +148,13 @@ if [ "$do_git" -eq 1 ]; then
     git -C "$target" init -q -b main
     echo "INFO: initialised git repo"
   fi
-  cat >> "$target/.gitignore" <<'EOF'
+  if ! grep -qsxF '.claude/settings.local.json' "$target/.gitignore"; then
+    cat >> "$target/.gitignore" <<'EOF'
 
 # Claude Code local machine-specific settings
 .claude/settings.local.json
 EOF
+  fi
   git -C "$target" add -A
   if git -C "$target" diff --cached --quiet; then
     echo "INFO: nothing to commit"
@@ -153,6 +176,7 @@ harness installed in $target
   state:    harness/status.yaml       (phase: discover, nothing approved yet)
   contract: harness/workflow.yaml
   fill in:  harness/docs/prd.md       — the discover gate checks it
+            harness/project.yaml      — test/lint/acceptance commands for YOUR stack
 
   approve an artifact:  say so in chat — the agent then writes
                         'approved_by: user' into the artifact itself
