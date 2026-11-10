@@ -209,8 +209,8 @@ while IFS=$'\t' read -r label body; do
 done < "$WORK/index"
 
 cat <<'TAIL'
-<footer>Rendered with Mermaid. Review the design, then sign off with
-<code>bash harness/gates/signoff.sh &lt;iteration-file&gt;</code>.</footer>
+<footer>Rendered with Mermaid. Review the design, then approve it in conversation —
+the agent records <code>approved_by: user</code> in the iteration file.</footer>
 </div>
 TAIL
 
