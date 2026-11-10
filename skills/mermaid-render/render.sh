@@ -55,14 +55,6 @@ html_escape() {
   sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
-sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
 # Fetch the vendored library on first use, so the skill works offline later.
 ensure_lib() {
   [ -s "$VENDOR_LIB" ] && return 0
@@ -133,11 +125,12 @@ cat <<'HEAD'
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 HEAD
-# Provenance: lets a consumer prove this render matches the current source
-# without relying on filesystem timestamps (whole-second `-nt` is unreliable).
+# Provenance: records which sources this page was rendered from. Freshness is
+# the design gate's job and is mtime-based since meta-0004; this page carries
+# no hash of its own.
 for f in "${files[@]}"; do
-  printf '<meta name="rendered-from" content="%s" data-sha256="%s">\n' \
-    "$(printf '%s' "$f" | html_escape)" "$(sha256_of "$f")"
+  printf '<meta name="rendered-from" content="%s">\n' \
+    "$(printf '%s' "$f" | html_escape)"
 done
 printf '<title>%s</title>\n' "$(printf '%s' "$title" | html_escape)"
 cat <<'STYLE'
