@@ -1,8 +1,8 @@
 ---
 id: meta-0008
-status: proposed
+status: accepted
 date: 2026-11-11
-approved_by:
+approved_by: user (2026-11-11, in chat — option 3, `full` stays as an opt-in)
 references:
   - meta-0003-bounded-autopilot.md
   - meta-0004-trusted-approval-markers.md
@@ -14,8 +14,8 @@ references:
 # meta-0008 Decision-gated autonomy: the human decides, the agent builds
 
 Meta ADR (workflow change, exempt from the project ADR hardcap — see
-`WORKFLOW_CHANGES.md`). **Proposed** — nothing in `workflow.yaml` or `gates/`
-changes until the user approves this (`status: accepted`, `approved_by: user`).
+`WORKFLOW_CHANGES.md`). Approved by the user before any change to
+`workflow.yaml` or `gates/` was made.
 
 ## Context and Problem Statement
 
@@ -83,8 +83,8 @@ Four further gaps stand between v7 and a loop that can be left alone:
 
 ## Decision Outcome
 
-Chosen option: **3**, with 4 as the leaner alternative the owner may pick at
-approval instead.
+Chosen option: **3**. Option 4 was offered as the leaner alternative at
+approval; the owner kept `full`.
 
 Option 1 leaves the goal unmet. Option 2 hands over the one checkpoint the owner
 has asked to keep: the design gate is the only place the harness makes a human

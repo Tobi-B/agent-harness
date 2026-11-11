@@ -24,6 +24,10 @@ max_stories=$(hardcap max_user_stories_per_discover_run)
 [ "${#stories[@]}" -le "$max_stories" ] \
   || fail "story count ${#stories[@]} exceeds hardcap $max_stories"
 
+# Structure first, approvals last: the user should not be asked to approve one
+# story while another is still malformed, and exit 3 must mean that approval
+# is the only thing missing.
+needs_approval=()
 for story in "${stories[@]}"; do
   base=$(basename "$story" .md)
 
@@ -37,8 +41,9 @@ for story in "${stories[@]}"; do
   feature="$FEATURES_DIR/${base}.feature"
   [ -f "$feature" ] || fail "missing $feature (must be 1:1 with $story)"
 
-  require_approved "$story"
-  require_approved "$feature"
+  needs_approval+=("$story" "$feature")
 done
+
+require_approved "${needs_approval[@]}"
 
 pass

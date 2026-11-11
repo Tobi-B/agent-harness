@@ -6,19 +6,23 @@ last_updated: null
 # `approved_by:` marker in its own frontmatter (or a '# approved_by:' comment
 # in .feature files), written by the agent only after the user approved in
 # conversation. See docs/adrs/meta-0004-trusted-approval-markers.md.
-# Auto mode. Off = human-in-the-loop cycle; on = the agent runs every phase
-# except release without asking, bounded by expiry and iteration budget.
+# Auto mode. Off = human-in-the-loop cycle. On, mode `build` (default): the
+# agent carries the transitions of design/implement/verify and approves
+# nothing. Mode `full`: the agent runs every phase except release alone.
+# Bounded by expiry and iteration budget; phase_timeout_s > 0 hands a phase
+# that stays red that long back to the user.
 # Written ONLY by gates/autopilot.sh — which the agent runs solely on the
 # user's explicit chat instruction — and by advance.sh spending the budget.
 autopilot:
   enabled: false
-  scope: all_but_release
+  mode: build
   enabled_by: null
   enabled_at: null
   expires_at: null
   max_iterations: 0
   iterations_used: 0
   iterations_claimed: []
+  phase_timeout_s: 0
   disabled_at: null
 phases:
   discover:

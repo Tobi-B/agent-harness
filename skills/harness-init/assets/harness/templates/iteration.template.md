@@ -8,8 +8,9 @@ references:
 ---
 
 <!-- approved_by stays empty in drafts. The agent fills in 'user' after the
-     user approves the rendered design in chat ('autopilot' only under an
-     active autopilot budget). The design gate fails while it is empty. -->
+     user approves the rendered design in chat. 'autopilot' counts only in
+     auto mode 'full' — in the default mode 'build' a design always needs the
+     user. The design gate waits (exit 3) while it is empty. -->
 
 # ITER-NN <Title>
 
@@ -58,5 +59,11 @@ sequenceDiagram
 - [ ] US-002 — all scenarios pass
 
 ## Notes
+
+<!-- Yours, like '## Verification': everything above them is the approved
+     design. Record the small, reversible choices you made yourself and what
+     the next story's agent needs to know (conventions, files touched). A
+     question you may NOT answer alone is not a note — open a decision:
+     docs/decisions/DEC-NNN-*.md (templates/decision.template.md). -->
 
 Open questions, follow-ups, deliberate deferrals.

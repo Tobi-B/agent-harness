@@ -56,6 +56,30 @@ t_msg() {
   fi
 }
 
+# t_rc: expect one exact exit code. Gates exit 1 for "work needed" and 3 for
+# "only the human's word is missing"; a loop acts on the difference.
+t_rc() {
+  local name="$1" want="$2" rc=0; shift 2
+  "$@" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq "$want" ]; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name (exit $rc, expected $want)"; failures=$((failures + 1))
+  fi
+}
+# t_out: expect success AND a line in the output.
+t_out() {
+  local name="$1" pattern="$2"; shift 2
+  local out
+  if ! out=$("$@" 2>&1); then
+    echo "FAIL $name (exit non-zero: $(tail -1 <<<"$out"))"; failures=$((failures + 1))
+  elif grep -q -- "$pattern" <<<"$out"; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name (output lacks '$pattern')"; failures=$((failures + 1))
+  fi
+}
+
 # Write the approval marker the way the agent would after the user approves:
 # frontmatter field in .md artifacts, comment line in .feature files.
 approve() {
@@ -153,7 +177,9 @@ for v in '' '""' 'TBD' 'pending' 'no' "            # left empty in drafts; the a
   approval_fixture "$v"
   t_fails "require_approved rejects placeholder [${v:0:20}]" approved "$FIXTURE/appr.md"
 done
-for v in 'user' 'autopilot' '"user"' 'user (2026-09-21)' 'user  # approved in chat'; do
+# 'autopilot' is not in this list any more: since v8 it counts only in auto
+# mode full, which is tested with the modes further down.
+for v in 'user' '"user"' 'user (2026-09-21)' 'user  # approved in chat'; do
   approval_fixture "$v"
   t "require_approved accepts [${v}]" approved "$FIXTURE/appr.md"
 done
@@ -430,17 +456,33 @@ t_fails "autopilot rejects an unreadable --expires" autopilot on --expires 9x
 t_fails "autopilot caps --expires at 3d" autopilot on --expires 7d
 t_fails "autopilot rejects a zero iteration budget" autopilot on --max-iterations 0
 
-# Scope: everything except release (meta-0005).
-t "auto scope covers discover" \
-  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope discover"
-t "auto scope covers plan" \
-  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope plan"
-t_fails "auto scope excludes release" \
-  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope release"
+# Scope is fixed per mode (meta-0008). build, the default: the iteration cycle
+# only. A status file without a mode — every pre-v8 installation — is build.
+in_scope() { bash -c ". '$GATES_DIR/_lib.sh'; autopilot_phase_in_scope $1"; }
+for ph in design implement verify; do
+  t "build carries $ph" in_scope "$ph"
+done
+for ph in discover architect model plan release; do
+  t_fails "build does not carry $ph" in_scope "$ph"
+done
+yq -i 'del(.autopilot.mode)' "$FIXTURE/status.yaml"
+t_fails "a status file without a mode is build: plan is not carried" in_scope plan
+yq -i '.autopilot.mode = "full"' "$FIXTURE/status.yaml"
+for ph in discover architect model plan design implement verify; do
+  t "full carries $ph" in_scope "$ph"
+done
+t_fails "full does not carry release" in_scope release
+yq -i '.autopilot.mode = "build"' "$FIXTURE/status.yaml"
+t_fails "autopilot rejects an unknown mode" autopilot on --mode turbo
+t_msg "autopilot names an option that lacks its value" "needs a value" autopilot on --expires
 
 t "autopilot turns on" autopilot_on --expires 4h --max-iterations 2
 t "autopilot reports on" autopilot status
 t "autopilot records who enabled it" test "$(status '.autopilot.enabled_by')" = "tester"
+t "autopilot defaults to mode build" test "$(status '.autopilot.mode')" = "build"
+t "enabling autopilot leaves an audit entry" \
+  grep -q -- 'mode\*\*: build' "$FIXTURE"/audit/autopilot-*.md
+t "the dead scope field is gone" test "$(status '.autopilot.scope')" = "null"
 
 # Budget: charged once per iteration, no matter how many phases it carries.
 # shellcheck source=../../gates/_lib.sh
@@ -454,7 +496,12 @@ t "budget charges a second iteration separately" bash -c "
   . '$GATES_DIR/_lib.sh'
   autopilot_claim_iteration ITER-97
   [ \"\$(yq '.autopilot.iterations_used' '$FIXTURE/status.yaml')\" = '2' ]"
-t_fails "autopilot stops when the iteration budget is spent" autopilot status
+# v8: a spent budget does not turn `status` off. advance.sh still carries the
+# iteration that spent it, and an agent told to stop when status says so used
+# to stop after design. What a spent budget does stop is a NEW iteration.
+t "autopilot status stays on with a spent budget" autopilot status
+t_msg "a spent budget blocks an iteration that was not claimed" "used its budget" \
+  bash -c ". '$GATES_DIR/_lib.sh'; autopilot_block_reason design"
 
 t "autopilot turns on again with fresh budget" autopilot_on --expires 4h --max-iterations 1
 yq -i '.autopilot.expires_at = "2020-01-01T00:00:00Z"' "$FIXTURE/status.yaml"
@@ -493,7 +540,8 @@ t "auto-advance records the gate"      test "$(status '.iterations.ITER-02.desig
 t "auto-advance moves to implement"    test "$(status '.current_phase')" = "implement"
 t "auto-advance charges the iteration" test "$(status '.autopilot.iterations_used')" = "1"
 t "audit attributes the transition to autopilot" \
-  grep -q -- 'approved by\*\*: autopilot(tester)' "$FIXTURE"/audit/design-*.md
+  grep -q -- 'transition via\*\*: autopilot(build, enabled by tester)' "$FIXTURE"/audit/design-*.md
+t "autopilot status stays on while the claimed iteration finishes" autopilot status
 # The budget is spent now (1 of 1); the iteration it paid for still finishes.
 t "a claimed iteration auto-advances implement on a spent budget" auto_advance implement
 t "a claimed iteration auto-advances verify on a spent budget"    auto_advance verify
@@ -589,6 +637,199 @@ commands: { test: "definitely-not-a-tool --run", lint: "true", acceptance: "true
 EOF
 t_msg "missing tool is named in the failure" "needs 'definitely-not-a-tool'" imp
 rm -rf "$IMP"
+
+# =============================================================================
+# v8 (meta-0008): decision-gated autonomy
+# =============================================================================
+
+rewind() { yq -i "$1" "$FIXTURE/status.yaml"; }
+next() { bash "$GATES_DIR/next.sh"; }
+
+autopilot off >/dev/null
+rewind '.current_phase = "design" | .current_iteration = "ITER-02"
+        | .iterations."ITER-02" = {} | .phases.release.gate_passed = false'
+
+# --- exit 3: only the human's word is missing --------------------------------
+#
+# A loop has to tell "there is work to do" from "there is nothing left but an
+# approval". Gates run every structural check first and exit 3 at the end.
+
+unapprove "docs/iterations/ITER-02.md"
+render_design ITER-02
+t_rc "design exits 3 when only the approval is missing" 3 bash "$GATES_DIR/design.sh"
+touch -d "2000-01-01 00:00:00" "$FIXTURE/docs/iterations/ITER-02.html"
+t_rc "design exits 1 on a stale render of an unapproved design" 1 bash "$GATES_DIR/design.sh"
+# v7 made every approval force a re-render: writing the marker makes the
+# markdown newer than the page the user just looked at.
+approve "docs/iterations/ITER-02.md"
+t "an approved design passes without a re-render" bash "$GATES_DIR/design.sh"
+
+unapprove "docs/user_stories/US-001-test.md"
+unapprove "tests/features/US-002-test.feature"
+t_rc "discover exits 3 when only approvals are missing" 3 bash "$GATES_DIR/discover.sh"
+t_msg "discover lists every waiting artifact: the story" "US-001-test.md is not approved" \
+  bash "$GATES_DIR/discover.sh"
+t_msg "discover lists every waiting artifact: the feature" "US-002-test.feature is not approved" \
+  bash "$GATES_DIR/discover.sh"
+printf -- '---\nid: US-009\nreferences: [x]\n---\n# no role, no want, no criteria\n' \
+  > "$FIXTURE/docs/user_stories/US-009-bad.md"
+t_rc "discover exits 1 while a structural check also fails" 1 bash "$GATES_DIR/discover.sh"
+rm -f "$FIXTURE/docs/user_stories/US-009-bad.md"
+approve "docs/user_stories/US-001-test.md"
+approve "tests/features/US-002-test.feature"
+t "discover passes again once both are approved" bash "$GATES_DIR/discover.sh"
+
+unapprove "docs/adrs/0001-test.md"
+t_rc "architect exits 3 when only the ADR approval is missing" 3 bash "$GATES_DIR/architect.sh"
+sed -i '/^## Cross-Cutting Concerns$/d' "$FIXTURE/docs/architecture.md"
+t_rc "architect exits 1, not 3, while architecture.md is incomplete" 1 bash "$GATES_DIR/architect.sh"
+echo '## Cross-Cutting Concerns' >> "$FIXTURE/docs/architecture.md"
+approve "docs/adrs/0001-test.md"
+
+unapprove "docs/plan.md"
+t_rc "plan exits 3 when only the plan approval is missing" 3 bash "$GATES_DIR/plan.sh"
+approve "docs/plan.md"
+
+# --- modes: who may approve ---------------------------------------------------
+#
+# build (default) approves nothing. `approved_by: autopilot` is a draft unless
+# auto mode is on, unexpired, and in mode full.
+
+approval_fixture autopilot
+t_rc "an autopilot marker is a draft while autopilot is off" 3 approved "$FIXTURE/appr.md"
+autopilot_on
+t_rc "an autopilot marker is a draft in mode build" 3 approved "$FIXTURE/appr.md"
+t_msg "the refusal says what would make it count" "mode 'full'" approved "$FIXTURE/appr.md"
+autopilot_on --mode full
+t "an autopilot marker counts in mode full" approved "$FIXTURE/appr.md"
+rewind '.autopilot.expires_at = "2020-01-01T00:00:00Z"'
+t_rc "an autopilot marker stops counting when full expires" 3 approved "$FIXTURE/appr.md"
+autopilot_on --mode full
+rewind 'del(.autopilot.mode)'
+t_rc "without a mode field the marker is a draft: a pre-v8 status file is build" 3 \
+  approved "$FIXTURE/appr.md"
+rm -f "$FIXTURE/appr.md"
+
+# --- build: real walks through advance.sh, no --yes ---------------------------
+
+autopilot_on --max-iterations 1
+sed -i 's/^approved_by:.*/approved_by: autopilot/' "$FIXTURE/docs/iterations/ITER-02.md"
+render_design ITER-02
+t_msg "build refuses a design the agent approved itself" "mode 'full'" auto_advance design
+unapprove "docs/iterations/ITER-02.md"
+render_design ITER-02
+t_msg "build never auto-advances an unapproved design" "is not approved" auto_advance design
+t "a refused design leaves the state alone" \
+  test "$(status '.current_phase')" = "design" \
+    -a "$(status '.iterations.ITER-02.design.gate_passed // false')" = "false"
+t_rc "next.sh: an unapproved design is the human's move" 3 next
+t_msg "next.sh names the design that is waiting" "ITER-02.md is not approved" next
+approve "docs/iterations/ITER-02.md"
+t_out "next.sh says advance once the user approved" "action: *advance" next
+t "…and advance.sh agrees: build advances a design the user approved" auto_advance design
+t "build advances implement" auto_advance implement
+
+# --- decisions ----------------------------------------------------------------
+#
+# A question the agent may not answer alone. Open = no valid approval marker.
+
+mkdir -p "$FIXTURE/docs/decisions"
+printf -- '---\nid: DEC-001\napproved_by:\n---\n# DEC-001 keep or drop\n' \
+  > "$FIXTURE/docs/decisions/DEC-001-test.md"
+t_msg "an open decision pauses auto-advance" "open decision" auto_advance verify
+t_rc "next.sh: an open decision is the human's move" 3 next
+t_msg "next.sh names the open decision" "DEC-001-test.md" next
+sed -i 's/^approved_by:.*/approved_by: autopilot/' "$FIXTURE/docs/decisions/DEC-001-test.md"
+t_msg "an answer from autopilot does not count in build" "open decision" auto_advance verify
+approve "docs/decisions/DEC-001-test.md"
+t "a decision the user answered releases the loop" auto_advance verify
+t "the walk reached release" test "$(status '.current_phase')" = "release"
+
+printf -- '---\nid: DEC-002\napproved_by:\n---\n# DEC-002 ship as is\n' \
+  > "$FIXTURE/docs/decisions/DEC-002-test.md"
+t_rc "release exits 3 while a decision is open" 3 bash "$GATES_DIR/release.sh"
+approve "docs/decisions/DEC-002-test.md"
+t "release passes once the decision is answered" bash "$GATES_DIR/release.sh"
+
+autopilot_on --mode full
+t_msg "release is never carried, not even in mode full" "release always waits for a human" \
+  auto_advance release
+
+# One write: advance.sh used to change status.yaml in about eight separate yq
+# calls, with current_phase last. Count them through a wrapper.
+YQ_WRAP="$(mktemp -d)"
+cat > "$YQ_WRAP/yq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do [ "\$a" = "-i" ] && echo x >> "$YQ_WRAP/writes"; done
+exec "$(command -v yq)" "\$@"
+EOF
+chmod +x "$YQ_WRAP/yq"
+t "release advances once the human says so" \
+  env PATH="$YQ_WRAP:$PATH" bash "$GATES_DIR/advance.sh" release --yes
+t "advance.sh writes status.yaml exactly once" \
+  test "$(wc -l < "$YQ_WRAP/writes" | tr -d ' ')" = "1"
+rm -rf "$YQ_WRAP"
+t "the audit records --yes as --yes, not as the user" \
+  grep -q -- 'transition via\*\*: --yes' "$FIXTURE"/audit/release-*.md
+t_rc "next.sh: done once release has passed" 4 next
+
+# --- once-phases: build never, full does --------------------------------------
+
+rewind '.current_phase = "plan" | .current_iteration = null
+        | .phases.plan.gate_passed = false | .phases.release.gate_passed = false'
+autopilot_on
+t_msg "build never auto-advances a once-phase" "does not carry 'plan'" auto_advance plan
+t_rc "next.sh: a green once-phase in build is the human's transition" 3 next
+t_msg "next.sh prints the command that is the human's to run" "advance.sh plan" next
+autopilot_on --mode full
+t "full auto-advances a once-phase" auto_advance plan
+t "…and that opened the first iteration" test "$(status '.current_iteration')" = "ITER-01"
+
+# --- next.sh: what now? -------------------------------------------------------
+
+autopilot_on
+status_sum() { cksum < "$FIXTURE/status.yaml"; }
+audits() { find "$FIXTURE/audit" -type f | wc -l | tr -d ' '; }
+sum_before=$(status_sum); audits_before=$(audits)
+next >/dev/null 2>&1 || true
+t "next.sh is pure" test "$sum_before" = "$(status_sum)" -a "$audits_before" = "$(audits)"
+
+t "walk ITER-01 to verify" bash -c "
+  bash '$GATES_DIR/advance.sh' design < /dev/null && bash '$GATES_DIR/advance.sh' implement < /dev/null"
+sed -i 's/- \[x\] US-001 verified/- [ ] US-001 pending/' "$FIXTURE/docs/iterations/ITER-01.md"
+t_out "next.sh says work while the gate is red and carried" "action: *work" next
+t_fails "…and advance.sh agrees: a red gate does not advance" auto_advance verify
+
+# Stall: a finer expiry. The clock runs from the later of the phase's
+# started_at and autopilot.enabled_at — fixed timestamps, no sleeping.
+autopilot_on --phase-timeout 60
+rewind '.autopilot.enabled_at = "2020-01-01T00:00:00Z"
+        | .iterations."ITER-01".verify.started_at = "2020-01-01T00:00:00Z"'
+t_rc "next.sh: a phase red past its timeout is the human's move" 3 next
+t_msg "next.sh says it stalled" "stalled" next
+autopilot_on --phase-timeout 60
+t_rc "re-enabling autopilot restarts the stall clock" 0 next
+rewind '.autopilot.enabled_at = "2020-01-01T00:00:00Z"'
+sed -i 's/- \[ \] US-001 pending/- [x] US-001 verified/' "$FIXTURE/docs/iterations/ITER-01.md"
+t_out "a gate that turns green still advances after the timeout" "action: *advance" next
+
+autopilot off >/dev/null
+t_rc "next.sh: a green gate without autopilot is the human's transition" 3 next
+t_fails "…and advance.sh agrees: it stops for the human" auto_advance verify
+sed -i 's/- \[x\] US-001 verified/- [ ] US-001 pending/' "$FIXTURE/docs/iterations/ITER-01.md"
+t_rc "next.sh: red and not carried is not work for an unattended loop" 3 next
+t_msg "…it still says what the work is" "action: *work" next
+sed -i 's/- \[ \] US-001 pending/- [x] US-001 verified/' "$FIXTURE/docs/iterations/ITER-01.md"
+
+# Mode full: where build waits for the user, full lets the agent approve.
+rewind '.current_phase = "design" | .current_iteration = "ITER-02" | .iterations."ITER-02" = {}'
+unapprove "docs/iterations/ITER-02.md"
+render_design ITER-02
+autopilot_on --mode full
+t_out "next.sh: in mode full the approval is the agent's to give" "action: *approve" next
+sed -i '0,/^---$/s/^---$/---\napproved_by: autopilot/' "$FIXTURE/docs/iterations/ITER-02.md"
+t "full advances a design the agent approved itself" auto_advance design
+autopilot off >/dev/null
 
 # -----------------------------------------------------------------------------
 

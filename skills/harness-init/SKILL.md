@@ -79,33 +79,46 @@ The loop, and who does what:
 | Interview, draft artifacts, render diagrams | agent |
 | `bash harness/gates/<phase>.sh` (pure check) | agent, freely |
 | Approve an artifact ("approved" in chat) | **user** — then the agent records `approved_by: user` in the file |
-| `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction, or under autopilot) |
+| `bash harness/gates/next.sh` (pure: what now, whose move) | agent, at the start of every tick |
+| `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction, or where auto mode carries the phase) |
+| Answer an open decision (`docs/decisions/DEC-*.md`) | **user** — then the agent records the answer and `approved_by: user` |
 | `bash harness/gates/autopilot.sh on\|off\|status` | **user decision** — agent runs `on` only on explicit chat instruction |
 
 Phases: `discover → architect → model → plan → ⟳(design → implement → verify) → release`.
 The middle three are iteration-scoped and repeat per iteration in
 `harness/docs/plan.md`.
 
-## Auto mode
+## Auto mode and the loop
 
-Two ways to run the harness. Without auto it is a human-in-the-loop
-development cycle: the user approves every artifact and every phase transition.
-With auto there is no human in the loop — the agent runs everything except the
-final `release` transition, which always waits for the user. Enabling is the
-user's call, made in chat: when they explicitly ask for auto mode, run
-`bash harness/gates/autopilot.sh on --expires 8h --max-iterations 3` for them —
-never on your own initiative. It expires on time and iteration count (the
-emergency brake) and marks machine-approved artifacts
-`approved_by: autopilot`. It pairs naturally with Claude Code's built-in
-`/loop`, which supplies the heartbeat while the gates supply the guardrails.
+Without auto, the user approves every artifact and every phase transition.
+Auto mode hands the agent a bounded part of that, in one of two modes:
+
+- **`build`** (default) — *the user decides, the agent builds.* The agent
+  carries the work and the transitions of `design`, `implement`, `verify` and
+  approves nothing: stories, ADRs, the plan and every iteration design still
+  need `approved_by: user`. Designs may be approved several iterations ahead.
+- **`full`** (must be named) — the agent also approves what it drafted, as
+  `approved_by: autopilot`, in every phase except `release`.
+
+Enabling is the user's call, made in chat: when they explicitly ask for auto
+mode, run `bash harness/gates/autopilot.sh on --expires 8h --max-iterations 3`
+for them (add `--mode full` only if they asked for exactly that) — never on
+your own initiative. `release` always waits for the user.
+
+`bash harness/gates/next.sh` answers "what now?" with one action and an exit
+code (0 go on, 3 the user's move, 4 done). `/harness` is one tick of that, so
+Claude Code's built-in `/loop /harness` runs the project until something
+waits for the user: an unapproved design, an open decision
+(`harness/docs/decisions/DEC-NNN-*.md`), a transition that is theirs, or the
+release. The rules are in the project's `AGENTS.md`.
 
 ## Notes
 
 - Keep the scaffold lean — do not add documents or restructure it during
   install. The harness's value is that a human can hold the whole thing in
   their head.
-- Only `approved_by: user` and `approved_by: autopilot` count; the gates treat
-  every other value as a draft.
+- Only `approved_by: user` counts — plus `approved_by: autopilot` while auto
+  mode is on in mode `full`; the gates treat every other value as a draft.
 - Never fabricate approvals: `approved_by: user` goes into a file only after
   the user explicitly approved that artifact in conversation. Nothing verifies
   this mechanically — which is exactly why it must hold.

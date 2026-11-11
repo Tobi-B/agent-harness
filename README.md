@@ -44,10 +44,18 @@ so bluntly in `AGENTS.md`: write it only after a human actually approved. See
 [`meta-0004`](harness/docs/adrs/meta-0004-trusted-approval-markers.md) for why the
 earlier hash-based scheme was removed.
 
-Auto mode exists for unattended runs — the agent then marks artifacts
-`approved_by: autopilot`, never `user`, so it stays visible what no human read.
-It is bounded by wall-clock expiry and an iteration budget, and `release` always
-waits for a person.
+**You decide, the agent builds.** Auto mode hands the agent the routine part.
+In its default mode, `build`, the agent carries the work and the transitions
+inside an iteration (`design → implement → verify`) and approves nothing:
+stories, ADRs, the plan and every iteration design stay yours, enforced by the
+gates. A question that comes up mid-flight becomes a decision file
+(`docs/decisions/DEC-NNN-*.md`) that stops the machine until you answer.
+`gates/next.sh` tells a loop what to do next and whose move it is. Mode `full`
+— which has to be named — also lets the agent approve what it drafted, marked
+`approved_by: autopilot`, never `user`. Either way auto mode is bounded by
+wall-clock expiry and an iteration budget, and `release` always waits for a
+person. See
+[`meta-0008`](harness/docs/adrs/meta-0008-decision-gated-autonomy.md).
 
 ## Install into your project
 
