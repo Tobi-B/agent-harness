@@ -5,3 +5,10 @@ harness/** text eol=lf
 AGENTS.md text eol=lf
 .claude/commands/*.md text eol=lf
 .opencode/command/*.md text eol=lf
+
+# Source repo only: the skill assets mirror harness/ and are run from wherever
+# they get installed, and tools/ is bash too. A CRLF checkout breaks them the
+# same way it breaks the gates. The vendored library is left byte-for-byte.
+skills/** text eol=lf
+tools/** text eol=lf
+skills/mermaid-render/vendor/** -text

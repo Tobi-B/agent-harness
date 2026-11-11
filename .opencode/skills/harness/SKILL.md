@@ -23,8 +23,12 @@ phases, gates, and hardcaps.
    as `approved_by:` markers inside the artifacts themselves.
 3. Read `harness/dor_dod.yaml` for the phase's readiness checklist.
 4. Read `harness/docs/plan.md` once past `plan` — it defines the iterations.
-5. Run the current phase's gate. Confirm with the user which phase to work on.
-   Never assume.
+5. Run the current phase's gate. Confirm with the user which phase to work on —
+   unless auto mode is on (see below), in which case the current phase is the
+   one to work.
+
+`AGENTS.md` at the repo root is the agent contract. Where this file and
+`AGENTS.md` disagree, `AGENTS.md` wins.
 
 ## The loop
 
@@ -49,6 +53,24 @@ Per phase: **interview → draft → render → user_approves_in_chat → you_ma
 - **user_advances** — ask the user to run
   `bash harness/gates/advance.sh <phase>`. Only pass `--yes` yourself if the
   user explicitly instructed you to advance.
+
+## Auto mode — only if the user asked for it
+
+The loop above is the human-in-the-loop mode. The user may instead ask for auto
+mode; when — and only when — they explicitly do, run
+`bash harness/gates/autopilot.sh on [--expires 8h] [--max-iterations 3]` for
+them. Never enable it yourself and never edit the `autopilot` block in
+`status.yaml`. Check it with `bash harness/gates/autopilot.sh status`.
+
+While it is on, for every phase except `release`:
+
+- mark artifacts you drafted `approved_by: autopilot` — never `user`;
+- run `bash harness/gates/advance.sh <phase>` without `--yes`: it proceeds
+  without the prompt and spends the iteration budget.
+
+Gates still have to pass, and you still render designs and leave them for the
+user. If auto mode is off, expired or out of budget, stop and say so — do not
+reach for `--yes`. `release` always waits for the user.
 
 ## Phase-specific reminders
 
@@ -104,7 +126,8 @@ Per phase: **interview → draft → render → user_approves_in_chat → you_ma
 - Fill `## Verification` in the iteration file, reporting on **every** story of
   that iteration, and check off the items. Unchecked boxes fail the gate.
 - Advancing past `verify` either starts the next iteration's `design` or moves
-  to `release` — the user decides when to advance.
+  to `release` — the user decides when to advance, or auto mode does while it
+  is on.
 
 ### release
 - Measure NFRs, compare against PRD Success Criteria, check off every PRD
@@ -117,12 +140,13 @@ Per phase: **interview → draft → render → user_approves_in_chat → you_ma
 - Never write `approved_by: user` before the user actually approved. The gate
   cannot detect a forged marker; that is why the rule is absolute.
 - Never run `advance.sh --yes` without an explicit user instruction for that
-  specific phase.
+  specific phase. Auto mode does not change this: under auto you run
+  `advance.sh` without `--yes`.
 - Never create a fourth project ADR without escalating.
 - Never materially edit an approved artifact without telling the user and
   re-requesting approval before restoring the marker.
 - Never ask for design approval without showing the rendered diagram.
-- Never assume the next phase — always ask.
+- Never assume the next phase — ask, unless auto mode is on.
 
 ## When to escalate
 

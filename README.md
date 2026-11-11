@@ -21,7 +21,7 @@ iteration in the plan, then loop.
 |---|---|
 | [`harness/`](harness/) | The harness itself — phases, gates, templates, docs. **Start here:** [`harness/README.md`](harness/README.md) |
 | [`skills/harness-init/`](skills/harness-init/) | Claude Code skill that scaffolds the harness into any project (carries its own copy of `harness/`) |
-| [`skills/mermaid-render/`](skills/mermaid-render/) | Claude Code skill that renders Mermaid diagrams into a reviewable HTML page |
+| [`skills/mermaid-render/`](skills/mermaid-render/) | Claude Code skill that makes Mermaid diagrams reviewable: a published Artifact by default, `render.sh` for a local HTML file (which the `design` gate needs) |
 | [`AGENTS.md`](AGENTS.md) | Portable agent contract — readable by any agent, no tool-specific setup |
 | [`tools/`](tools/) | `install-skills.sh`, `sync-skill.sh` (keeps the skill's bundled copy in sync) |
 
@@ -55,27 +55,38 @@ waits for a person.
 bash harness/init.sh <TARGET_DIR> --name <PROJECT_NAME>
 ```
 
-Nothing outside `harness/`, `.claude/commands/`, `.opencode/command/`, and
-`AGENTS.md` is touched; an existing `AGENTS.md` is preserved. Then work one phase
-at a time — via `/harness` in Claude Code or opencode, or by pointing any other
+Besides `harness/`, the installer adds the `/harness` command for Claude Code
+and opencode, `AGENTS.md`, a `.shellcheckrc`, and LF rules in `.gitattributes`.
+Unless you pass `--no-git` it also adds one `.gitignore` entry, initialises a
+repo if there is none, and makes one commit. An existing `AGENTS.md` is kept —
+the harness copy lands next to it as `AGENTS.harness.md`. Then work one phase at
+a time — via `/harness` in Claude Code or opencode, or by pointing any other
 agent at `AGENTS.md`.
 
 Install the skills for your own account with:
 
 ```bash
-bash tools/install-skills.sh
+bash tools/install-skills.sh           # copy this repo's skills to ~/.claude/skills
+bash tools/install-skills.sh --check   # is the installed copy still this repo's?
+bash tools/package-skill.sh            # zips for uploading as account skills
 ```
+
+This repo is the only place the skills are edited. The installed copy and the
+account skills are built from it, each stamped with the workflow version and
+commit it came from.
 
 ## Requirements
 
-- `bash`, `jq`, and mikefarah `yq` **v4** (the gate library rejects python-yq)
-- `pytest`, `ruff` — once the project has a `src/`
-- `behave`, or any Gherkin runner, for `tests/features/*.feature`
+- `bash` **>= 4**, `jq`, and mikefarah `yq` **v4** (the gate library rejects python-yq)
+- whatever the commands in `harness/project.yaml` call: the `implement` gate
+  runs your stack's test, lint and acceptance commands from there. A Python
+  project with a `pyproject.toml` and no configured commands falls back to
+  `pytest`, `ruff` and `behave`.
 
 ```bash
-winget install MikeFarah.yq jqlang.jq   # Windows
-brew install yq jq                      # macOS
-pip install behave pytest ruff
+winget install MikeFarah.yq jqlang.jq   # Windows — run the gates in Git Bash
+brew install bash yq jq                 # macOS — its /bin/bash is 3.2
+pip install behave pytest ruff          # only for the Python fallback
 ```
 
 ## Development
@@ -85,8 +96,16 @@ bash harness/tests/gates/test_gates.sh
 ```
 
 The harness self-tests its own gates. CI additionally runs shellcheck, scaffolds
-into a clean directory to confirm a fresh install starts with zero approvals, and
-checks that the skill's bundled copy has not drifted from `harness/`.
+into a clean directory to confirm a fresh install starts with zero approvals,
+checks that the skill's bundled copy has not drifted from `harness/`, and runs
+`tools/check-repo.sh`: no removed concept is still being taught, the installed
+`/harness` commands match their sources in `harness/glue/`, and the workflow
+version that is live has an approved ADR behind it.
+
+Work on a branch and merge through a pull request with CI green. Run parallel
+agent sessions in separate worktrees, not in one checkout — two sessions
+sharing a working tree is how unrelated changes ended up in each other's
+commits here.
 
 Changes to the harness itself go through the meta-loop documented in
 [`harness/docs/WORKFLOW_CHANGES.md`](harness/docs/WORKFLOW_CHANGES.md): a
