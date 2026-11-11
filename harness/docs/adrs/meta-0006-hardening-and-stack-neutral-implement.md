@@ -1,8 +1,8 @@
 ---
 id: meta-0006
-status: proposed
+status: accepted
 date: 2026-09-21
-approved_by:
+approved_by: user (2026-11-11, in chat)
 references:
   - meta-0001-pure-gates-and-verifiable-signoff.md
   - meta-0004-trusted-approval-markers.md
@@ -12,8 +12,10 @@ references:
 # meta-0006 Close silent-pass holes; make the implement gate stack-neutral
 
 Meta ADR (workflow change, exempt from the project ADR hardcap — see
-`WORKFLOW_CHANGES.md`). **Proposed** — takes effect when the user who owns the
-workflow approves it (set `status: accepted` and `approved_by: user`).
+`WORKFLOW_CHANGES.md`). Approved after the fact: the machinery shipped as v7 on
+2026-11-09 while this ADR was still `proposed`; the user approved it on
+2026-11-11. `tools/check-repo.sh` now fails CI when a live version has no
+approved ADR, so that order cannot repeat unnoticed.
 
 ## Context and Problem Statement
 

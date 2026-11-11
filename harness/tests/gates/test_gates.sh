@@ -39,6 +39,22 @@ t_fails() {
     echo "ok   $name"
   fi
 }
+# t_msg: expect failure AND a specific message. A gate has many reasons to
+# exit non-zero, so a bare t_fails passes just as happily when something
+# unrelated broke first: a phase that is not current, a diagram that is not
+# there yet, a tool missing from a trimmed PATH. Use this wherever more than
+# one check could be the one that fails.
+t_msg() {
+  local name="$1" pattern="$2"; shift 2
+  local out
+  if out=$("$@" 2>&1); then
+    echo "FAIL $name (expected non-zero exit)"; failures=$((failures + 1))
+  elif grep -q -- "$pattern" <<<"$out"; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name (wrong reason: $(tail -1 <<<"$out"))"; failures=$((failures + 1))
+  fi
+}
 
 # Write the approval marker the way the agent would after the user approves:
 # frontmatter field in .md artifacts, comment line in .feature files.
@@ -158,7 +174,7 @@ t "rel_to_root is portable" test "$(rel_to_root "$FIXTURE/docs/x.md")" = "docs/x
 t "discover passes with approval markers" bash "$GATES_DIR/discover.sh"
 
 unapprove "docs/user_stories/US-001-test.md"
-t_fails "discover fails when a story lacks approved_by" bash "$GATES_DIR/discover.sh"
+t_msg "discover fails when a story lacks approved_by" "is not approved" bash "$GATES_DIR/discover.sh"
 approve "docs/user_stories/US-001-test.md"
 t "discover passes once the marker is restored" bash "$GATES_DIR/discover.sh"
 
@@ -176,18 +192,22 @@ t "gate run mutates no state" \
 
 # --- prerequisite enforcement + advance --------------------------------------
 
-t_fails "architect fails while discover gate not passed" bash "$GATES_DIR/architect.sh"
-t_fails "advance without --yes fails non-interactively" bash "$GATES_DIR/advance.sh" discover < /dev/null
-t_fails "advance rejects unknown phase" bash "$GATES_DIR/advance.sh" bogus --yes
+t_msg "architect fails while discover gate not passed" "prerequisite phase 'discover'" bash "$GATES_DIR/architect.sh"
+t_msg "advance without --yes fails non-interactively" "phase transitions require user approval" \
+  bash "$GATES_DIR/advance.sh" discover < /dev/null
+t_msg "advance rejects unknown phase" "unknown phase 'bogus'" bash "$GATES_DIR/advance.sh" bogus --yes
 
 t "advance discover" advance discover
 t "discover gate_passed recorded" test "$(status '.phases.discover.gate_passed')" = "true"
 t "current_phase is architect"     test "$(status '.current_phase')" = "architect"
 t "audit file written"             test -n "$(find "$FIXTURE/audit" -name 'discover-*.md' -print -quit)"
 
-t_fails "advance refuses a phase that is not current" advance model
-t_fails "advance refuses to re-advance a passed phase" advance discover
-t "re-advance left the phase alone" test "$(status '.current_phase')" = "architect"
+t_msg "advance refuses a later phase" "is not the current phase" advance model
+# An earlier phase is refused for the same reason — it is not current. The
+# separate "already passed" guard is only reachable once the workflow is
+# finished, and is tested there.
+t_msg "advance refuses an earlier phase that already passed" "is not the current phase" advance discover
+t "refused advance left the phase alone" test "$(status '.current_phase')" = "architect"
 
 # --- architect ---------------------------------------------------------------
 
@@ -218,7 +238,7 @@ cat > "$FIXTURE/docs/architecture.md" <<'EOF'
 ## Code (Level 4)
 ## Cross-Cutting Concerns
 EOF
-t_fails "architect fails without ADR approval" bash "$GATES_DIR/architect.sh"
+t_msg "architect fails without ADR approval" "is not approved" bash "$GATES_DIR/architect.sh"
 approve "docs/adrs/0001-test.md"
 t "advance architect" advance architect
 
@@ -228,9 +248,13 @@ for d in c4-context c4-container c4-component; do
   printf '%%%% sources: US-001, ADR-0001\nflowchart LR\n  A-->B\n' > "$FIXTURE/docs/uml/$d.mmd"
 done
 printf 'sequenceDiagram\n  A->>B: x\n' > "$FIXTURE/docs/uml/sequence-flow.mmd"
-t_fails "model fails when a diagram has no sources line" bash "$GATES_DIR/model.sh"
-printf '%%%% sources: US-001\nsequenceDiagram\n  A->>B: x\n' > "$FIXTURE/docs/uml/sequence-flow.mmd"
+t_msg "model fails without a state diagram" "no state-" bash "$GATES_DIR/model.sh"
+# The state diagram has to exist before a missing sources line can be the
+# reason: model.sh looks for the diagram first, and the sources test used to
+# pass on its absence alone.
 printf '%%%% sources: US-001\nstateDiagram-v2\n  [*] --> Idle\n' > "$FIXTURE/docs/uml/state-life.mmd"
+t_msg "model fails when a diagram has no sources line" "missing '%% sources:'" bash "$GATES_DIR/model.sh"
+printf '%%%% sources: US-001\nsequenceDiagram\n  A->>B: x\n' > "$FIXTURE/docs/uml/sequence-flow.mmd"
 t "advance model" advance model
 
 # --- plan --------------------------------------------------------------------
@@ -250,7 +274,7 @@ EOF
 write_plan "  - id: ITER-01
     goal: first
     stories: [US-001]"
-t_fails "plan fails when a story is in no iteration" bash "$GATES_DIR/plan.sh"
+t_msg "plan fails when a story is in no iteration" "is not covered by any iteration" bash "$GATES_DIR/plan.sh"
 
 write_plan "  - id: ITER-01
     goal: first
@@ -258,7 +282,7 @@ write_plan "  - id: ITER-01
   - id: ITER-02
     goal: second
     stories: [US-002]"
-t_fails "plan fails on unknown story reference" bash "$GATES_DIR/plan.sh"
+t_msg "plan fails on unknown story reference" "references story 'US-999'" bash "$GATES_DIR/plan.sh"
 
 write_plan "  - id: ITER-01
     goal: first
@@ -266,7 +290,7 @@ write_plan "  - id: ITER-01
   - id: ITER-01
     goal: dup
     stories: [US-002]"
-t_fails "plan fails on duplicate iteration id" bash "$GATES_DIR/plan.sh"
+t_msg "plan fails on duplicate iteration id" "duplicate iteration id" bash "$GATES_DIR/plan.sh"
 
 write_plan "  - id: ITER-01
     goal: first
@@ -274,7 +298,7 @@ write_plan "  - id: ITER-01
   - id: ITER-02
     goal: second
     stories: [US-002]"
-t_fails "plan fails without approval" bash "$GATES_DIR/plan.sh"
+t_msg "plan fails without approval" "is not approved" bash "$GATES_DIR/plan.sh"
 approve "docs/plan.md"
 # v7 regression: first_iteration_id used `| head -1` under pipefail and died
 # with SIGPIPE (exit 141) in ~40% of calls. One call proves nothing; 50 do.
@@ -319,21 +343,21 @@ render_design() {
 }
 
 make_design ITER-01 US-001
-t_fails "design fails without rendered html" bash "$GATES_DIR/design.sh"
+t_msg "design fails without rendered html" "missing rendered" bash "$GATES_DIR/design.sh"
 
 render_design ITER-01
 # Age the render explicitly: same-second edits are deliberately tolerated, so
 # staleness needs an html that is measurably older than the markdown.
 touch -d "2000-01-01 00:00:00" "$FIXTURE/docs/iterations/ITER-01.html"
-t_fails "design fails on stale render (older than source)" bash "$GATES_DIR/design.sh"
+t_msg "design fails on stale render (older than source)" "stale render" bash "$GATES_DIR/design.sh"
 
 render_design ITER-01
-t_fails "design fails without approval" bash "$GATES_DIR/design.sh"
+t_msg "design fails without approval" "is not approved" bash "$GATES_DIR/design.sh"
 approve "docs/iterations/ITER-01.md"
 render_design ITER-01
 t "design passes with fresh render + approval" bash "$GATES_DIR/design.sh"
 
-t_fails "implement blocked before design gate passes" bash "$GATES_DIR/implement.sh"
+t_msg "implement blocked before design gate passes" "has not passed its 'design' gate" bash "$GATES_DIR/implement.sh"
 t "advance design" advance design
 t "current_phase is implement" test "$(status '.current_phase')" = "implement"
 t "design flag under iteration" test "$(status '.iterations.ITER-01.design.gate_passed')" = "true"
@@ -341,7 +365,7 @@ t "design flag under iteration" test "$(status '.iterations.ITER-01.design.gate_
 # --- implement + verify (iteration-scoped) ----------------------------------
 
 t "advance implement" advance implement
-t_fails "verify fails with unchecked items" bash "$GATES_DIR/verify.sh"
+t_msg "verify fails with unchecked items" "unchecked" bash "$GATES_DIR/verify.sh"
 
 sed -i 's/- \[ \] US-001 pending/- [x] US-001 verified/' "$FIXTURE/docs/iterations/ITER-01.md"
 t "verify passes when all items checked" bash "$GATES_DIR/verify.sh"
@@ -353,7 +377,7 @@ t "looped back to design"           test "$(status '.current_phase')" = "design"
 t "current_iteration is now ITER-02" test "$(status '.current_iteration')" = "ITER-02"
 t "ITER-01 verify recorded"          test "$(status '.iterations.ITER-01.verify.gate_passed')" = "true"
 
-t_fails "release blocked while ITER-02 unfinished" bash "$GATES_DIR/release.sh"
+t_msg "release blocked while ITER-02 unfinished" "cannot release" bash "$GATES_DIR/release.sh"
 
 # Second iteration through the cycle.
 make_design ITER-02 US-002
@@ -378,11 +402,14 @@ met
 ## NFR
 met
 EOF
-t_fails "release fails on unchecked PRD boxes" bash "$GATES_DIR/release.sh"
+t_msg "release fails on unchecked PRD boxes" "PRD has no checked" bash "$GATES_DIR/release.sh"
 sed -i 's/- \[ \]/- [x]/' "$FIXTURE/docs/prd.md"
 t "release passes with all boxes checked" bash "$GATES_DIR/release.sh"
 t "advance release" advance release
 t "workflow complete" test "$(status '.phases.release.gate_passed')" = "true"
+# The one state in which a once-phase is both current and passed: the workflow
+# is finished. This is the guard that an interrupted advance would also hit.
+t_msg "a finished workflow cannot be advanced again" "already passed its gate" advance release
 
 # --- autopilot (meta-0003) ---------------------------------------------------
 #
@@ -414,8 +441,6 @@ t_fails "auto scope excludes release" \
 t "autopilot turns on" autopilot_on --expires 4h --max-iterations 2
 t "autopilot reports on" autopilot status
 t "autopilot records who enabled it" test "$(status '.autopilot.enabled_by')" = "tester"
-t_fails "release still needs a human while autopilot is on" \
-  bash "$GATES_DIR/advance.sh" release < /dev/null
 
 # Budget: charged once per iteration, no matter how many phases it carries.
 # shellcheck source=../../gates/_lib.sh
@@ -437,28 +462,58 @@ t_fails "autopilot stops when expired" autopilot status
 
 t "autopilot turns off" autopilot off
 t "off is recorded" test "$(status '.autopilot.enabled')" = "false"
-t_fails "advance still needs a human when autopilot is off" \
-  bash "$GATES_DIR/advance.sh" discover < /dev/null
 
-# --- tool strictness ---------------------------------------------------------
+# --- autopilot end to end: a real walk through advance.sh ---------------------
+#
+# Everything above checks the switch and the budget arithmetic by calling
+# library functions. None of it sends advance.sh down its autopilot branch, and
+# the two tests that claimed to ("release still needs a human while autopilot
+# is on", "advance still needs a human when autopilot is off") failed for an
+# unrelated reason: release had already passed, discover was not current.
+# Rewind the fixture to the start of ITER-02 and walk it the way an unattended
+# agent would: no --yes, no terminal.
 
-t_fails "implement fails on missing tools without opt-out" \
-  env HARNESS_ALLOW_MISSING_TOOLS=0 PATH="/usr/bin:/bin" \
-      HARNESS_ROOT="$FIXTURE" bash "$GATES_DIR/implement.sh"
+auto_advance() { bash "$GATES_DIR/advance.sh" "$1" < /dev/null; }
 
-# t_msg: expect failure AND a specific message — so a test cannot pass because
-# something unrelated broke first (e.g. yq missing from a trimmed PATH).
-t_msg() {
-  local name="$1" pattern="$2"; shift 2
-  local out
-  if out=$("$@" 2>&1); then
-    echo "FAIL $name (expected non-zero exit)"; failures=$((failures + 1))
-  elif grep -q -- "$pattern" <<<"$out"; then
-    echo "ok   $name"
-  else
-    echo "FAIL $name (wrong reason: $(tail -1 <<<"$out"))"; failures=$((failures + 1))
-  fi
-}
+yq -i '.current_phase = "design" | .current_iteration = "ITER-02"
+       | .iterations."ITER-02" = {}
+       | .phases.release.gate_passed = false | .phases.release.completed_at = null' \
+  "$FIXTURE/status.yaml"
+render_design ITER-02   # verify edited the markdown after the first render
+
+t_msg "advance needs a human when autopilot is off" "phase transitions require user approval" \
+  auto_advance design
+t "a refused advance changes nothing" \
+  test "$(status '.current_phase')" = "design" \
+    -a "$(status '.iterations.ITER-02.design.gate_passed // false')" = "false"
+
+autopilot_on --expires 4h --max-iterations 1
+t "autopilot advances design without a prompt" auto_advance design
+t "auto-advance records the gate"      test "$(status '.iterations.ITER-02.design.gate_passed')" = "true"
+t "auto-advance moves to implement"    test "$(status '.current_phase')" = "implement"
+t "auto-advance charges the iteration" test "$(status '.autopilot.iterations_used')" = "1"
+t "audit attributes the transition to autopilot" \
+  grep -q -- 'approved by\*\*: autopilot(tester)' "$FIXTURE"/audit/design-*.md
+# The budget is spent now (1 of 1); the iteration it paid for still finishes.
+t "a claimed iteration auto-advances implement on a spent budget" auto_advance implement
+t "a claimed iteration auto-advances verify on a spent budget"    auto_advance verify
+t "the walk charged one iteration, not three phases" test "$(status '.autopilot.iterations_used')" = "1"
+t "the last iteration hands over to release"         test "$(status '.current_phase')" = "release"
+
+# Release, with a fresh and fully valid budget: the refusal has to come from
+# the scope, not from an autopilot that happens to be exhausted.
+autopilot_on --expires 4h --max-iterations 2
+t "autopilot is on with budget left" autopilot status
+t_msg "release needs a human even while autopilot is on" "phase transitions require user approval" \
+  auto_advance release
+t "a refused release stays unpassed" test "$(status '.phases.release.gate_passed')" = "false"
+t "release advances once the human says so" advance release
+autopilot off >/dev/null
+
+# Tool strictness of the implement gate is tested further down, against a
+# fixture that reaches the check and with the exact message expected. The test
+# that used to sit here trimmed PATH but ran with no current iteration, so it
+# passed before the gate ever looked at a tool.
 
 # --- v7: autopilot finishes the iterations it claimed -----------------------
 
