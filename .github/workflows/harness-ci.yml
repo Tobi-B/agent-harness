@@ -38,7 +38,7 @@ jobs:
           test ! -e "$S/docs/user_stories/US-001"*.md
 
           # ...and approvals live in the artifacts, not in status.yaml, since
-          # meta-0004 replaced the sha256 registry with `approved_by:` markers.
+          # meta-0004 replaced the hash registry with `approved_by:` markers.
           # Scope this to artifact-shaped files: the READMEs and templates
           # document the marker syntax and would match a naive pattern.
           # `|| true` because grep exits 1 on no match, which is the pass case.
@@ -60,3 +60,24 @@ jobs:
         run: |
           bash skills/harness-init/assets/harness/init.sh /tmp/skill-check --name skill-demo --no-git
           bash /tmp/skill-check/harness/tests/gates/test_gates.sh
+
+      # No removed concept still taught, /harness commands match harness/glue/,
+      # and the live workflow version has an approved meta ADR behind it.
+      - name: Repo consistency
+        run: bash tools/check-repo.sh
+
+      - name: Skills install, verify and package
+        run: |
+          export CLAUDE_SKILLS_DIR=/tmp/skills
+          bash tools/install-skills.sh
+          bash tools/install-skills.sh --check
+          # A stale installed copy must be reported, not waved through.
+          echo "drift" >> /tmp/skills/harness-init/SKILL.md
+          if bash tools/install-skills.sh --check; then
+            echo "::error::install-skills.sh --check passed on a modified copy"
+            exit 1
+          fi
+          bash tools/package-skill.sh /tmp/dist
+          unzip -l /tmp/dist/harness-init.zip | grep -q 'harness-init/SKILL.md'
+          unzip -l /tmp/dist/harness-init.zip | grep -q 'harness-init/VERSION'
+          unzip -l /tmp/dist/mermaid-render.zip | grep -q 'mermaid-render/render.sh'
