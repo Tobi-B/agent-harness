@@ -41,27 +41,59 @@ iteration listed in `docs/plan.md`. `advance.sh verify` either loops back to
 4. Check any phase anytime: `bash gates/<phase>.sh` (pure, CI-safe).
 5. Advance: `bash gates/advance.sh <phase>` — runs the gate, writes the audit,
    updates `status.yaml`, moves to the next phase or iteration.
+6. Lost? `bash gates/next.sh` says where you stand and whose move it is.
 
 ## Auto mode (optional)
 
-Two ways to run the harness: **without auto** every artifact approval and every
-phase transition is yours — a human-in-the-loop development cycle. **With auto**
-the agent runs the whole machine alone, no human in the loop, until the final
-`release` transition — that one always waits for you. Enable it by saying so in
-chat; the agent then runs:
+**Without auto** every artifact approval and every phase transition is yours.
+**With auto** you hand the agent a bounded part of that. Say so in chat; the
+agent then runs:
 
 ```bash
-bash gates/autopilot.sh on --expires 8h --max-iterations 3
-bash gates/autopilot.sh status     # exit 0 = on
+bash gates/autopilot.sh on --expires 8h --max-iterations 3     # mode build
+bash gates/autopilot.sh on --mode full --expires 8h            # must be named
+bash gates/autopilot.sh status     # exit 0 = on and unexpired
 bash gates/autopilot.sh off
 ```
 
-It expires on both wall clock and iteration count — the emergency brake for a
-forgotten autopilot. Auto-approved artifacts are marked
-`approved_by: autopilot`, so it stays visible what a human actually read.
-Gates still have to pass; auto mode changes who approves, not what is checked.
-See `docs/adrs/meta-0003-bounded-autopilot.md` and
-`docs/adrs/meta-0005-full-autopilot-except-release.md`.
+| | `build` (default) | `full` |
+|---|---|---|
+| agent advances alone | `design`, `implement`, `verify` | every phase except `release` |
+| `approved_by: autopilot` counts | never | while auto is on and unexpired |
+| `release` | you | you |
+
+`build` is *you decide, the agent builds*: stories, ADRs, the plan and every
+iteration design need your approval — the design gate enforces it — and the
+grind inside an iteration runs alone. Approve the designs of the next N
+iterations in one sitting and the loop runs N iterations unattended. `full` is
+the v6 behaviour: the agent also approves what it drafted, visibly, as
+`approved_by: autopilot`.
+
+Auto mode expires on wall clock and iteration count, and optionally on a stall
+(`--phase-timeout 2h`: a phase whose gate stays red that long becomes your
+move). Gates still have to pass. See
+`docs/adrs/meta-0008-decision-gated-autonomy.md`.
+
+## Decisions
+
+When the agent hits a question it may not answer alone — an approved artifact
+would have to change, an architectural choice no ADR covers, a story that
+cannot be built as written — it writes `docs/decisions/DEC-NNN-<slug>.md`
+(question, options, recommendation) and leaves `approved_by:` empty. While a
+decision is open, autopilot carries nothing and `release` does not pass. You
+answer in chat; the agent records the answer and the marker.
+
+## What now?
+
+```bash
+bash gates/next.sh
+```
+
+Pure. Prints phase, iteration, the gate's verdict, the autopilot state, one
+action (`work`, `advance`, `approve`, `await_human`, `done`) and what is
+waiting for you. Exit `0` = the agent may go on, `3` = your move, `4` = done,
+`2` = environment broken — so a loop is `while bash gates/next.sh; do <one
+tick>; done`, and `/loop /harness` in Claude Code is exactly that.
 
 ## Install into another project
 
@@ -88,9 +120,11 @@ harness — see `tools/sync-skill.sh` in the source repo.
 | `docs/adrs/` | MADR ADRs. `meta-*.md` = workflow ADRs, exempt from the 3-ADR cap. |
 | `templates/` | Feature and iteration skeletons (outside `tests/` so behave ignores them). |
 | `glue/` | Canonical copies of the `/harness` command (Claude Code + opencode) and `.shellcheckrc`; `init.sh` installs them to their hidden target paths. |
-| `gates/<phase>.sh` | Pure phase checks — no state mutation. |
-| `gates/advance.sh` | **User-run**: gate + audit + status update + phase/iteration transition. |
-| `gates/autopilot.sh` | Auto mode on/off — run only on the user's explicit instruction; bounded by expiry + budget. |
+| `docs/decisions/` | `DEC-NNN-*.md` — questions the agent may not answer alone. Open until `approved_by: user`. |
+| `gates/<phase>.sh` | Pure phase checks — no state mutation. Exit 0 pass, 1 work missing, 3 only your approval missing, 2 environment. |
+| `gates/next.sh` | Pure: "what now?" — one action and whose move it is. The question a loop asks every tick. |
+| `gates/advance.sh` | Gate + audit + status update + phase/iteration transition. Yours, or the agent's where auto mode carries the phase. |
+| `gates/autopilot.sh` | Auto mode on/off — run only on the user's explicit instruction; modes `build`/`full`, bounded by expiry + budget. |
 | `init.sh` | Install the harness into another project. |
 | `tests/gates/test_gates.sh` | Self-tests for the gates themselves. |
 | `audit/*.md` | Phase audit trail, written by `advance.sh`. |
@@ -101,15 +135,20 @@ harness — see `tools/sync-skill.sh` in the source repo.
   script — nothing declared-but-unchecked.
 - Each gate requires its predecessor's `gate_passed` flag.
 - `plan` requires **every** approved story to be covered by some iteration.
-- `design` requires a rendered HTML that is not older than the markdown — you
-  cannot approve a design nobody could look at, or an obviously stale one.
+- `design` requires a rendered HTML that is not older than the markdown until
+  the design is approved — you cannot approve a design nobody could look at,
+  or an obviously stale one.
 - `implement` runs the commands from `project.yaml` in the **project root** (the
   directory containing `harness/`). No source, an unconfigured command or a
   missing tool **fails** it; `HARNESS_ALLOW_MISSING_TOOLS=1` downgrades those to
   warnings. A command that runs and fails is never downgraded. TODO/FIXME in
   delivered code fails it — comments included.
 - `advance.sh` only advances the **current** phase — it cannot rewind or skip.
-- Approval counts only as `approved_by: user` or `approved_by: autopilot`;
+- Gates check structure first and approvals last, and exit 3 instead of 1
+  when only an approval is missing.
+- `release` fails while any decision in `docs/decisions/` is open.
+- Approval counts only as `approved_by: user`, or as `approved_by: autopilot`
+  while auto mode is on in mode `full`;
   empty values and placeholders (`TBD`, `pending`, `""`) are drafts.
 - `release` requires every PRD checkbox checked and every iteration verified.
 

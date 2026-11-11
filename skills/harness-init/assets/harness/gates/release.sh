@@ -40,4 +40,9 @@ grep -qF "## Result" "$REPORT" || fail "$REPORT missing '## Result' section"
 grep -qF "Success Criteria" "$REPORT" || fail "$REPORT missing 'Success Criteria' section"
 grep -qF "NFR" "$REPORT" || fail "$REPORT missing 'NFR' section"
 
+# Last (exit 3): a question the agent put to the user must not ship unanswered.
+open=$(open_decisions)
+[ -z "$open" ] \
+  || wait_for_human "open decisions — the user has to answer them before release: ${open//$'\n'/, }"
+
 pass

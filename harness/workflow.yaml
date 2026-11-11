@@ -1,4 +1,4 @@
-version: 7
+version: 8
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
@@ -6,6 +6,8 @@ name: lean-harness
 # Gates are pure checks; state transitions happen only via gates/advance.sh.
 # Approvals are `approved_by:` markers inside the artifacts, written by the
 # agent only after the user approved in conversation — no hashes, no registry.
+# A gate exits 1 when work is needed and 3 when only the human's word is
+# missing; gates/next.sh turns that into the one action a loop takes next.
 #
 # Shape:
 #   discover → architect → model → plan → ⟳(design → implement → verify) → release
@@ -135,7 +137,7 @@ phases:
         - iteration_file_has_goal_approach_components_test_strategy
         - iteration_file_contains_at_least_one_mermaid_diagram
         - iteration_file_references_all_its_planned_stories
-        - rendered_html_exists_and_is_not_older_than_source
+        - rendered_html_exists_and_is_fresh_until_the_design_is_approved
         - iteration_design_carries_approved_by_marker
     audit: audit/design-*.md
     next: implement
@@ -148,6 +150,7 @@ phases:
       - write_failing_test_per_acceptance_criterion
       - implement_minimum_to_pass
       - run_tests_and_lint
+      - one_fresh_subagent_per_story_where_the_tool_has_subagents   # convention; a subagent never writes approval markers or runs advance.sh
       - use_idempotency_keys_per_architecture_md   # convention; reviewed, not machine-checked
     produces:
       - <project>/<source_dirs>/**   # source_dirs from project.yaml, default src
@@ -205,33 +208,52 @@ phases:
         - every_planned_iteration_passed_design_implement_verify
         - all_prd_checkbox_criteria_checked_off
         - verify_report_has_result_success_criteria_nfr_sections
+        - no_open_decisions
     audit: audit/release-*.md
     next: null
 
 agent:
-  loop: interview -> draft -> render -> user_approves_in_chat -> agent_marks_approved_by -> run_gate -> user_advances
-  approval_marker: "approved_by: user | autopilot"   # frontmatter in .md, '# approved_by:' comment in .feature — written by the agent ONLY after the user approved in conversation
-  advance_tool: gates/advance.sh    # run by the USER; agent may run it only with --yes on explicit instruction; advances the CURRENT phase only
+  loop: next -> (work | wait_for_the_user | advance) -> next
+  next_tool: gates/next.sh          # pure; exit 0 = go on (work/advance), 3 = the human's move, 4 = done
+  approval_marker: "approved_by: user | autopilot"   # frontmatter in .md, '# approved_by:' comment in .feature — `user` written by the agent ONLY after the user approved in conversation; `autopilot` counts only in auto mode `full`
+  advance_tool: gates/advance.sh    # the user, or the agent with --yes on explicit instruction, or autopilot for the phases its mode carries; advances the CURRENT phase only
   autopilot_tool: gates/autopilot.sh  # agent runs it ONLY on the user's explicit chat instruction
   render_tool: ~/.claude/skills/mermaid-render/render.sh
-  user_in_the_loop_required_for:
-    - phase_transitions
+  user_in_the_loop_required_for:    # in auto mode `build` too; mode `full` hands all but the last two to the agent
     - adr_decisions
     - iteration_designs
     - material_changes_to_approved_artifacts   # re-ask, then refresh the marker
     - exceptions_to_hardcaps
+    - open_decisions
+    - release
 
-# Auto mode: off = human-in-the-loop development cycle, on = no human in the
-# loop until it expires — except release, which always waits. Enabled on the
-# user's explicit chat instruction. See docs/adrs/meta-0003-bounded-autopilot.md
-# and docs/adrs/meta-0005-full-autopilot-except-release.md.
+# Questions the agent may not answer alone (meta-0008). An open decision — a
+# DEC file without a valid approval marker — stops autopilot and fails release.
+decisions:
+  path: docs/decisions/DEC-*.md
+  template: templates/decision.template.md
+  open_when: approved_by_marker_missing_or_invalid
+
+# Auto mode: off = human-in-the-loop development cycle. On, in one of two modes
+# fixed in gates/_lib.sh — see docs/adrs/meta-0008-decision-gated-autonomy.md
+# (and meta-0003 / meta-0005 for the history):
+#   build (default)  the user decides, the agent builds: autopilot carries the
+#                    transitions of design/implement/verify and approves nothing
+#   full             the agent runs every phase except release alone
+# Enabled on the user's explicit chat instruction; `full` only when asked for.
 autopilot:
-  scope: [discover, architect, model, plan, design, implement, verify]   # fixed in gates/_lib.sh, not configurable
+  modes:
+    build:
+      carries: [design, implement, verify]
+      approves: []                    # `approved_by: autopilot` does not count
+    full:
+      carries: [discover, architect, model, plan, design, implement, verify]
+      approves: own_artifacts         # marked `approved_by: autopilot`
+  default_mode: build
   never: [release]
-  enable: gates/autopilot.sh on [--expires 8h] [--max-iterations 3]   # agent runs it only on explicit user instruction
+  enable: gates/autopilot.sh on [--mode build|full] [--expires 8h] [--max-iterations 3] [--phase-timeout 2h]
   disable: gates/autopilot.sh off
-  bounded_by: [expires_at, max_iterations]   # a claimed iteration is finished even on a spent budget; expiry always stops
-  auto_approval_marks: "approved_by: autopilot"
+  bounded_by: [expires_at, max_iterations, phase_timeout_s]   # a claimed iteration is finished even on a spent budget; expiry always stops; an open decision always stops
   status_file: status.yaml
   audit_dir: audit/
 

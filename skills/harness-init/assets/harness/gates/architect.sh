@@ -28,13 +28,14 @@ for adr in "${adrs[@]}"; do
   for section in "## Context and Problem Statement" "## Decision Drivers" "## Considered Options" "## Decision Outcome"; do
     grep -qF "$section" "$adr" || fail "$adr missing MADR section: $section"
   done
-
-  require_approved "$adr"
 done
 
 [ -f "$ARCH" ] || fail "missing $ARCH"
 for section in "## Context (Level 1)" "## Containers (Level 2)" "## Components (Level 3)" "## Code (Level 4)" "## Cross-Cutting Concerns"; do
   grep -qF "$section" "$ARCH" || fail "architecture.md missing section: $section"
 done
+
+# Approvals last (exit 3): every structural check above has passed.
+require_approved "${adrs[@]}"
 
 pass

@@ -73,7 +73,7 @@ cp "$SRC_ROOT/tests/gates/test_gates.sh" "$target/harness/tests/gates/"
 # --- doc skeletons: templates, not this project's content --------------------
 mkdir -p "$target/harness/docs/adrs" "$target/harness/docs/uml" \
          "$target/harness/docs/user_stories" "$target/harness/docs/iterations" \
-         "$target/harness/audit"
+         "$target/harness/docs/decisions" "$target/harness/audit"
 cp "$SRC_ROOT/docs/prd.md" "$SRC_ROOT/docs/architecture.md" "$SRC_ROOT/docs/plan.md" \
    "$SRC_ROOT/docs/WORKFLOW_CHANGES.md" "$target/harness/docs/"
 cp "$SRC_ROOT/docs/adrs/README.md"          "$target/harness/docs/adrs/"
@@ -82,7 +82,7 @@ cp "$SRC_ROOT/docs/user_stories/README.md"  "$target/harness/docs/user_stories/"
 # The meta ADRs explain WHY the gates are built this way — worth carrying along.
 cp "$SRC_ROOT/docs/adrs/"meta-*.md "$target/harness/docs/adrs/" 2>/dev/null || true
 
-for d in docs/adrs docs/uml docs/user_stories docs/iterations audit tests/features; do
+for d in docs/adrs docs/uml docs/user_stories docs/iterations docs/decisions audit tests/features; do
   [ -n "$(find "$target/harness/$d" -mindepth 1 -print -quit 2>/dev/null)" ] \
     || touch "$target/harness/$d/.gitkeep"
 done

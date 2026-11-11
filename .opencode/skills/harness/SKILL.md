@@ -18,14 +18,13 @@ phases, gates, and hardcaps.
 
 1. Locate `harness/workflow.yaml`. If missing, ask the user before scaffolding
    anything (`harness-init` skill, or `bash harness/init.sh <target>`).
-2. Read `harness/status.yaml` — `current_phase`, `current_iteration`, gate
-   history, and the `autopilot` block. Approvals are *not* in here: they live
-   as `approved_by:` markers inside the artifacts themselves.
+2. Run `bash harness/gates/next.sh` — phase, iteration, the gate's verdict,
+   the autopilot state, one action, and what is waiting for the user. Pure.
+   (State lives in `harness/status.yaml`; approvals are *not* in there: they
+   are `approved_by:` markers inside the artifacts themselves.)
 3. Read `harness/dor_dod.yaml` for the phase's readiness checklist.
 4. Read `harness/docs/plan.md` once past `plan` — it defines the iterations.
-5. Run the current phase's gate. Confirm with the user which phase to work on —
-   unless auto mode is on (see below), in which case the current phase is the
-   one to work.
+5. Do what `next.sh` says (see "the tick" below).
 
 `AGENTS.md` at the repo root is the agent contract. Where this file and
 `AGENTS.md` disagree, `AGENTS.md` wins.
@@ -36,7 +35,7 @@ phases, gates, and hardcaps.
 discover → architect → model → plan → ⟳( design → implement → verify ) → release
 ```
 
-Per phase: **interview → draft → render → user_approves_in_chat → you_mark_approved_by → run_gate → user_advances**
+Per phase: **interview → draft → render → user_approves_in_chat → you_mark_approved_by → run_gate → advance**
 
 - **interview** — targeted questions for the phase goal, a handful at a time.
 - **draft** — write artifacts into the paths declared in `produces:`.
@@ -49,28 +48,40 @@ Per phase: **interview → draft → render → user_approves_in_chat → you_ma
   the marker exists, so nothing but your own honesty stands between a real
   approval and a forged one. Never pre-fill it, never infer it from silence.
 - **run_gate** — `bash harness/gates/<phase>.sh`. Pure checks, no side effects;
-  run as often as useful. Fails twice for the same reason → escalate.
-- **user_advances** — ask the user to run
-  `bash harness/gates/advance.sh <phase>`. Only pass `--yes` yourself if the
-  user explicitly instructed you to advance.
+  run as often as useful. Exit 1 = work is missing, exit 3 = only the user's
+  approval is missing. Fails twice for the same reason → escalate.
+- **advance** — `bash harness/gates/advance.sh <phase>` is the user's, unless
+  auto mode carries the phase (`next.sh` then says `action: advance`). Only
+  pass `--yes` yourself if the user explicitly instructed you to advance.
 
-## Auto mode — only if the user asked for it
+## Auto mode, decisions, the tick
 
-The loop above is the human-in-the-loop mode. The user may instead ask for auto
-mode; when — and only when — they explicitly do, run
-`bash harness/gates/autopilot.sh on [--expires 8h] [--max-iterations 3]` for
-them. Never enable it yourself and never edit the `autopilot` block in
-`status.yaml`. Check it with `bash harness/gates/autopilot.sh status`.
+`AGENTS.md` holds these rules; this is the short form.
 
-While it is on, for every phase except `release`:
+- **Auto mode** is enabled only on the user's explicit request:
+  `bash harness/gates/autopilot.sh on [--mode build|full] [--expires 8h] [--max-iterations 3]`.
+  Never enable it yourself and never edit the `autopilot` block in
+  `status.yaml`.
+  - `build` (default): you advance `design`, `implement`, `verify` without
+    asking and approve **nothing** — every story, ADR, plan and iteration
+    design still needs `approved_by: user`.
+  - `full` (only if the user named it): you also mark what you drafted
+    `approved_by: autopilot` — never `user` — in every phase except `release`.
+- **Decisions.** A question that is not yours to answer (an approved artifact
+  would change, an architectural choice no ADR covers, a story that cannot be
+  built as written, a `project.yaml` command would change, a hardcap,
+  anything irreversible) becomes `harness/docs/decisions/DEC-NNN-<slug>.md`
+  with an empty `approved_by:`. While one is open, autopilot carries nothing
+  and `release` does not pass. Small reversible choices go into the
+  iteration's `## Notes`.
+- **The tick.** `bash harness/gates/next.sh`, then: `work` → one unit, commit;
+  `advance` → run the printed `advance.sh` command without `--yes`;
+  `approve` (mode `full`) → mark your drafts `approved_by: autopilot`;
+  exit 3 → show the user what is waiting and stop; exit 4 → done.
 
-- mark artifacts you drafted `approved_by: autopilot` — never `user`;
-- run `bash harness/gates/advance.sh <phase>` without `--yes`: it proceeds
-  without the prompt and spends the iteration budget.
-
-Gates still have to pass, and you still render designs and leave them for the
-user. If auto mode is off, expired or out of budget, stop and say so — do not
-reach for `--yes`. `release` always waits for the user.
+Gates still have to pass, and you still render designs and show them. Do not
+work out for yourself whether auto mode covers a phase — `next.sh` says so.
+`release` always waits for the user.
 
 ## Phase-specific reminders
 
@@ -108,12 +119,18 @@ reach for `--yes`. `release` always waits for the user.
   `## Test Strategy`, plus a `## Verification` section for later.
 - At least one mermaid block, and the file must name every story the plan
   assigned to this iteration.
-- Render to `docs/iterations/ITER-NN.html` and **show it**. The gate requires
-  the HTML to be no older than the markdown, so re-render after any edit.
-- The iteration design needs an `approved_by:` marker.
+- Render to `docs/iterations/ITER-NN.html` and **show it**. Until the design
+  is approved the gate requires the HTML to be no older than the markdown, so
+  re-render after any edit.
+- The iteration design needs `approved_by: user` (`autopilot` counts only in
+  auto mode `full`). The user may approve designs several iterations ahead.
+- If an approved design no longer fits when its turn comes: open a decision,
+  do not edit it.
 
 ### implement (per iteration)
-- TDD: failing test first, then minimum code to pass.
+- TDD: failing test first, then minimum code to pass. One story at a time —
+  in a fresh subagent per story where the tool has them; a subagent never
+  writes an approval marker and never runs `advance.sh`.
 - The gate runs `commands.test|lint|acceptance` from `harness/project.yaml` in
   the **project root** (the directory containing `harness/`), and scans
   `source_dirs` for `TODO`/`FIXME` — comments included.
@@ -127,12 +144,14 @@ reach for `--yes`. `release` always waits for the user.
   that iteration, and check off the items. Unchecked boxes fail the gate.
 - Advancing past `verify` either starts the next iteration's `design` or moves
   to `release` — the user decides when to advance, or auto mode does while it
-  is on.
+  carries `verify`.
 
 ### release
 - Measure NFRs, compare against PRD Success Criteria, check off every PRD
   checkbox, write `docs/verify-report.md` with `## Result`, `Success Criteria`,
   and `NFR` sections. Add a short retro.
+- The gate fails while any decision is open, and the transition is always the
+  user's.
 
 ## Hard rules
 
@@ -142,16 +161,20 @@ reach for `--yes`. `release` always waits for the user.
 - Never run `advance.sh --yes` without an explicit user instruction for that
   specific phase. Auto mode does not change this: under auto you run
   `advance.sh` without `--yes`.
-- Never create a fourth project ADR without escalating.
+- Never mark anything `approved_by: autopilot` unless auto mode is on in mode
+  `full`.
+- Never answer an open decision yourself.
+- Never create a fourth project ADR without a decision from the user.
 - Never materially edit an approved artifact without telling the user and
   re-requesting approval before restoring the marker.
 - Never ask for design approval without showing the rendered diagram.
-- Never assume the next phase — ask, unless auto mode is on.
+- Never assume the next phase — ask `next.sh`.
 
 ## When to escalate
 
-- a gate fails twice in a row
-- a fourth ADR is needed
+Open a decision (above) for anything on the trigger list in `AGENTS.md`. Also
+stop and tell the user when:
+
+- a gate fails twice in a row for the same reason
 - a request falls outside the PRD's declared scope
-- the PRD must change after stories are approved
 - a meta-question arises (`harness/docs/WORKFLOW_CHANGES.md` applies)

@@ -64,7 +64,7 @@ design:
   definition_of_done:
     - iteration_file_has_goal_approach_components_test_strategy
     - at_least_one_mermaid_diagram
-    - rendered_html_not_older_than_source
+    - rendered_html_fresh_when_the_design_is_approved
     - user_actually_looked_at_the_rendered_design (manual)
     - iteration_design_approved
     - iteration_design_gate_passed_true
@@ -99,5 +99,6 @@ release:
     - prd_success_criteria_verified
     - nfr_targets_measured
     - verify_report_md_complete
+    - no_open_decisions
     - retro_written (manual)
     - status_yaml_phase_release_completed_true

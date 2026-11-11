@@ -39,7 +39,8 @@ rm -rf "$stage/harness/audit" \
 rm -f  "$stage/harness/docs/user_stories/US-"* \
        "$stage/harness/docs/uml/"*.mmd \
        "$stage/harness/tests/features/US-"* \
-       "$stage/harness/docs/iterations/"*
+       "$stage/harness/docs/iterations/"* \
+       "$stage/harness/docs/decisions/DEC-"*
 find "$stage/harness/docs/adrs" -name '000*.md' -delete 2>/dev/null || true
 # No `mkdir audit` here: git cannot track an empty directory, so the assets
 # can never carry one in a fresh clone and the --check diff would always

@@ -36,10 +36,16 @@ RENDER_CMD="bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o $ITER
 
 [ -f "$ITER_HTML" ] || fail "missing rendered $ITER_HTML — run: $RENDER_CMD"
 
-# Freshness by mtime: the render must not be older than its source. Equal
-# timestamps pass — filesystem seconds-resolution makes a render right after
-# a write look simultaneous, and that is fine.
-if [ "$ITER_MD" -nt "$ITER_HTML" ]; then
+# Freshness by mtime, checked only UNTIL the design is approved: what the user
+# is about to look at must not be older than its source. Equal timestamps pass
+# — filesystem seconds-resolution makes a render right after a write look
+# simultaneous, and that is fine.
+#
+# Once approved, the check is over. Writing the approval marker itself makes
+# the markdown newer than the render, which used to force a re-render after
+# every approval; and `verify` later edits the same file. Material changes
+# after approval are covered by the re-ask rule, not by a timestamp.
+if ! approval_is_valid "$(approved_by_of "$ITER_MD")" && [ "$ITER_MD" -nt "$ITER_HTML" ]; then
   fail "$ITER_HTML is older than the current $ITER_MD (stale render) — re-run: $RENDER_CMD"
 fi
 

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Advance past a phase: run its (pure) gate, write the audit file, record the
-# result in status.yaml, and move to the next phase — looping back through the
+# Advance past a phase: run its (pure) gate, record the result in status.yaml,
+# write the audit file, and move to the next phase — looping back through the
 # iteration cycle (design → implement → verify) until the plan is exhausted.
 #
-# THIS IS THE PHASE TRANSITION — it requires user approval. Run it yourself,
-# or pass --yes only when the user has explicitly told the agent to advance.
-# Without --yes it asks for interactive confirmation, so an agent cannot
-# advance silently.
+# THIS IS THE PHASE TRANSITION. Three things can let it happen:
+#   * the user, answering the prompt in a terminal;
+#   * --yes, which the agent may pass only when the user explicitly told it to
+#     advance (the harness cannot tell who asked; the audit says "--yes");
+#   * autopilot, for the phases its mode carries — see _lib.sh. In mode
+#     `build` that is design/implement/verify, and the design gate still only
+#     passes for a design the user approved.
+# Anything else stops here, so an agent cannot advance silently.
 #
 # Usage: bash gates/advance.sh <phase> [--yes]
 set -euo pipefail
@@ -49,21 +53,18 @@ if [ "$scope" = "iteration" ]; then
   [ -n "$iter" ] || fail "phase '$phase' is iteration-scoped but status.yaml has no current_iteration"
 fi
 
-# Autopilot stands in for the human prompt, but only inside the iteration cycle
-# and only while it has budget. Everything else still stops here.
+# --- who lets this transition happen? ------------------------------------------
 auto_advance=0
-if [ "$assume_yes" -ne 1 ] && autopilot_active_for "$phase"; then
+via=""
+if [ "$assume_yes" -eq 1 ]; then
+  via="--yes (the harness cannot tell who asked for it)"
+elif block=$(autopilot_block_reason "$phase"); then
   auto_advance=1
   echo "autopilot: advancing '$phase'${iter:+ ($iter)} without asking"
-fi
-
-if [ "$assume_yes" -ne 1 ] && [ "$auto_advance" -ne 1 ]; then
-  if [ ! -t 0 ]; then
-    if autopilot_phase_in_scope "$phase"; then
-      warn "$(autopilot_enabled_and_valid || true)"
-    fi
-    fail "phase transitions require user approval: run interactively or pass --yes on explicit user instruction"
-  fi
+elif [ ! -t 0 ]; then
+  warn "$block"
+  fail "phase transitions require user approval: run interactively or pass --yes on explicit user instruction"
+else
   if [ -n "$iter" ]; then
     printf "Advance past phase '%s' of iteration %s? [y/N] " "$phase" "$iter"
   else
@@ -71,7 +72,7 @@ if [ "$assume_yes" -ne 1 ] && [ "$auto_advance" -ne 1 ]; then
   fi
   read -r answer
   case "$answer" in
-    y|Y|yes|YES) ;;
+    y|Y|yes|YES) via="interactive" ;;
     *) echo "aborted"; exit 1 ;;
   esac
 fi
@@ -80,12 +81,6 @@ echo "running gate: $phase${iter:+ ($iter)}"
 bash "$SCRIPT_DIR/$phase.sh" || fail "gate '$phase' failed — not advancing"
 
 ts=$(now_iso)
-
-# An iteration costs budget the first time autopilot carries any of its phases.
-# Charging at 'design' would miss the case where the user hands over mid-cycle.
-if [ "$auto_advance" -eq 1 ] && [ -n "$iter" ]; then
-  autopilot_claim_iteration "$iter"
-fi
 
 # --- decide where we go next -------------------------------------------------
 # 'plan' opens the iteration cycle; 'verify' either loops back to design for the
@@ -111,6 +106,53 @@ case "$phase" in
     next=$(phase_next "$phase")
     ;;
 esac
+final=0
+if [ "$next" = "null" ] || [ -z "$next" ]; then
+  final=1
+fi
+
+# --- record it: ONE write ------------------------------------------------------
+# Every change this transition makes to status.yaml goes into a single yq call,
+# so an interruption leaves the file either as it was or fully advanced.
+expr=""
+add() { expr="${expr:+$expr | }$1"; }
+
+if [ -n "$iter" ]; then
+  add ".iterations.\"${iter}\".${phase}.gate_passed = true"
+  add ".iterations.\"${iter}\".${phase}.completed_at = \"${ts}\""
+else
+  add ".phases.${phase}.gate_passed = true"
+  add ".phases.${phase}.completed_at = \"${ts}\""
+fi
+
+if [ "$final" -eq 1 ]; then
+  add ".current_iteration = null"
+elif [ -n "$next_iter" ]; then
+  add ".current_iteration = \"${next_iter}\""
+  add ".iterations.\"${next_iter}\".${next}.started_at = \"${ts}\""
+  add ".current_phase = \"${next}\""
+elif [ "$(phase_scope "$next")" = "iteration" ]; then
+  add ".iterations.\"${iter}\".${next}.started_at = \"${ts}\""
+  add ".current_phase = \"${next}\""
+else
+  add ".current_iteration = null"
+  add ".phases.${next}.started_at = \"${ts}\""
+  add ".current_phase = \"${next}\""
+fi
+
+# An iteration costs budget the first time autopilot carries any of its phases.
+# Charging at 'design' would miss the case where the user hands over mid-cycle.
+if [ "$auto_advance" -eq 1 ] && [ -n "$iter" ]; then
+  claim=$(autopilot_claim_expr "$iter")
+  [ -z "$claim" ] || add "$claim"
+fi
+add ".last_updated = \"${ts}\""
+
+status_apply "$expr"
+
+if [ "$auto_advance" -eq 1 ]; then
+  via="autopilot($(autopilot_mode), enabled by $(autopilot_field enabled_by)) — expires $(autopilot_field expires_at), $(autopilot_field iterations_used)/$(autopilot_field max_iterations) iterations used"
+fi
 
 GATE_NAME="$phase" write_audit <<EOF
 # Audit: phase $phase${iter:+ — iteration $iter}
@@ -119,9 +161,7 @@ GATE_NAME="$phase" write_audit <<EOF
 - **at**: $ts
 ${iter:+- **iteration**: $iter}
 - **next**: ${next}${next_iter:+ ($next_iter)}
-- **approved by**: $([ "$auto_advance" -eq 1 ] \
-    && echo "autopilot($(autopilot_field enabled_by)) — expires $(autopilot_field expires_at), $(autopilot_field iterations_used)/$(autopilot_field max_iterations) iterations used" \
-    || echo "user")
+- **transition via**: $via
 
 ## Approved artifacts at transition
 
@@ -131,31 +171,12 @@ $(grep -rlE '^(#[[:space:]]*)?approved_by:' "$DOCS_DIR" "$HARNESS_ROOT/tests/fea
   done)
 EOF
 
-if [ -n "$iter" ]; then
-  set_iteration_status "$iter" "$phase" "gate_passed" "true"
-  set_iteration_status "$iter" "$phase" "completed_at" "$ts"
-else
-  set_status "$phase" "gate_passed" "true"
-  set_status "$phase" "completed_at" "$ts"
-fi
-
-if [ "$next" = "null" ] || [ -z "$next" ]; then
-  set_current_iteration ""
+if [ "$final" -eq 1 ]; then
   echo "workflow complete: '$phase' was the final phase"
-  exit 0
-fi
-
-if [ -n "$next_iter" ]; then
-  set_current_iteration "$next_iter"
-  set_iteration_status "$next_iter" "$next" "started_at" "$ts"
+elif [ -n "$next_iter" ]; then
   echo "advanced: current_phase = $next (iteration $next_iter)"
-elif [ "$(phase_scope "$next")" = "iteration" ]; then
-  set_iteration_status "$iter" "$next" "started_at" "$ts"
+elif [ -n "$iter" ] && [ "$(phase_scope "$next")" = "iteration" ]; then
   echo "advanced: current_phase = $next (iteration $iter)"
 else
-  set_current_iteration ""
-  set_status "$next" "started_at" "$ts"
   echo "advanced: current_phase = $next"
 fi
-
-set_current_phase "$next"

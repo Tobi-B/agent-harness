@@ -7,12 +7,13 @@ setup. Claude Code and opencode also have a `/harness` command.
 
 ## Quick Start
 
-1. Read `harness/status.yaml` — `current_phase`, `current_iteration`, autopilot.
-2. Read `harness/workflow.yaml` — phases, gates, hardcaps.
-3. Read `harness/dor_dod.yaml` — per-phase readiness criteria.
-4. Read `harness/docs/plan.md` — the iteration list, once past `plan`.
-5. Run the current phase's gate to see where you stand. Confirm with the user
-   which phase to work on.
+1. Run `bash harness/gates/next.sh` — it prints the phase, the iteration, the
+   gate's verdict, the autopilot state, ONE action, and what is waiting for
+   the user. It is pure; run it as often as you like.
+2. Read `harness/workflow.yaml` — phases, gates, hardcaps — and
+   `harness/dor_dod.yaml` — per-phase readiness criteria.
+3. Read `harness/docs/plan.md` — the iteration list, once past `plan`.
+4. Do what `next.sh` says (see "One tick" below).
 
 ## The loop
 
@@ -24,10 +25,13 @@ discover → architect → model → plan → ⟳( design → implement → veri
 iteration in `docs/plan.md` and record their state under
 `iterations.<ITER-NN>` in `status.yaml`.
 
-Per phase: **interview → draft → render → user approves in chat → you record it → run gate → user advances.**
+Per phase: **interview → draft → render → user approves in chat → you record it → run gate → advance.**
 
-User approval is required for: phase transitions, every ADR, every iteration
-design, material changes to already-approved artifacts, exceptions to hardcaps.
+The user decides, you build. User approval is required for: stories, every
+ADR, the plan, every iteration design, the answer to every open decision,
+`release`, material changes to already-approved artifacts, exceptions to
+hardcaps. Phase transitions are the user's too — unless they switched auto
+mode on, which hands you the routine ones (below).
 
 ## Approval is the user's word, not yours
 
@@ -42,8 +46,9 @@ silence, and if you materially edit an approved artifact afterwards, tell the
 user, ask again, and only then refresh the marker. A fabricated approval defeats
 the harness at its core; nothing else in this file matters more than this.
 
-The single exception is `approved_by: autopilot`, and only while the user has
-enabled auto mode (see below).
+`approved_by: autopilot` exists as a second value, and it counts only while the
+user has auto mode on **in mode `full`** (below). In the default mode `build`
+it is not an approval, and the gates say so.
 
 Only those two values count. The gates treat anything else — an empty field,
 `""`, `TBD`, `pending`, a leftover template comment — as a **draft**. Leave the
@@ -51,41 +56,105 @@ field empty in drafts; do not invent placeholder values.
 
 ## Auto mode — only if the user asked for it
 
-Two modes exist. **Without auto** this is a human-in-the-loop development
-cycle: the user approves every artifact and every transition. **With auto**
-there is no human in the loop: you run every phase except `release` alone.
+Without auto, every approval and every transition is the user's. Auto mode
+hands you a bounded part of that. It has two modes:
+
+| | `build` (default) | `full` (must be named) |
+|---|---|---|
+| you advance without asking | `design`, `implement`, `verify` | every phase except `release` |
+| `approved_by: autopilot` counts | never | while auto is on and unexpired |
+| `release` | user | user |
+
+`build` is "the user decides, you build": stories, ADRs, the plan and every
+iteration design still need `approved_by: user`; what you carry alone is the
+work and the transitions inside an iteration. The user may approve the designs
+of several iterations ahead, and the loop then runs that far unattended.
+`full` additionally lets you approve what you drafted — as
+`approved_by: autopilot`, never `user`, so it stays honest about what no human
+read.
 
 Enabling is the user's decision, made in conversation. When — and only when —
-the user explicitly asks for auto mode, run
-`bash harness/gates/autopilot.sh on [--expires 8h] [--max-iterations 3]` for
-them. Never enable it on your own initiative, and never edit the `autopilot`
-block in `status.yaml` directly.
+the user explicitly asks for it, run
+`bash harness/gates/autopilot.sh on [--mode build|full] [--expires 8h] [--max-iterations 3] [--phase-timeout 2h]`
+for them. Use `--mode full` only if the user asked for exactly that. Never
+enable auto on your own initiative, and never edit the `autopilot` block in
+`status.yaml` directly.
 
-Check with `bash harness/gates/autopilot.sh status` (exit 0 = on). While it is
-on, for every phase except `release`:
+Auto mode changes who carries a transition, not what is checked: gates still
+have to pass, and you still render every design and show it. Do not work out
+for yourself whether auto mode still covers you — ask `next.sh`. When it exits
+3, stop and say what is waiting; do not reach for `--yes`. `release` always
+waits for the user, so even a fully auto run ends in front of a person.
 
-- you may mark artifacts you drafted as `approved_by: autopilot` — never
-  `approved_by: user`, so it stays honest about what no human read;
-- `bash harness/gates/advance.sh <phase>` proceeds without the prompt;
-  iteration-cycle phases spend the iteration budget.
+## Decisions — how you ask instead of guessing
 
-Auto mode changes who approves, not what is checked: gates still have to pass,
-and you still render designs and leave them for the user to find. If it is off,
-expired, or out of budget, stop and say so — do not reach for `--yes`.
-`release` always waits for the user, so even a fully auto run ends in front of
-a person.
+Some questions come up mid-flight and are not yours to answer. Do not decide
+them silently and do not bury them in a note: open a decision,
+`harness/docs/decisions/DEC-NNN-<slug>.md` (from
+`harness/templates/decision.template.md`) — the question, the options, your
+recommendation — and leave `approved_by:` empty. While any decision is open,
+autopilot carries nothing and `release` does not pass: the machine waits. When
+the user answers in chat, record the answer under `## Decision` and write
+`approved_by: user`.
+
+Open a decision when:
+
+- an artifact the user approved (story, feature file, ADR, plan, design) would
+  have to change — including an approved design that no longer fits the code;
+- an architectural choice is not covered by an ADR: a new dependency, a schema,
+  a public interface, anything security-relevant;
+- a story cannot be built as specified;
+- a command in `harness/project.yaml` would change, or
+  `HARNESS_ALLOW_MISSING_TOOLS` would be set;
+- a hardcap would be exceeded;
+- something is irreversible or leaves the machine (publishing, deleting,
+  sending).
+
+Small, reversible choices are yours: make them and record them under
+`## Notes` in the iteration file. That an open decision stops the machine is
+enforced by the gates; recognising when to open one is on you.
+
+## One tick
+
+`/harness`, a loop (`/loop /harness`), or any other driver does the same thing:
+
+1. `bash harness/gates/next.sh`.
+2. **`action: work`** — do ONE unit of work on what the gate reports missing,
+   then commit it. In `implement` one unit is one story, and where your tool
+   has subagents, give each story a fresh one: hand it the story, its feature
+   file, the approved design and the iteration's `## Notes`; have it add what
+   the next story needs to know to `## Notes`. A subagent never writes an
+   `approved_by:` marker, never runs `advance.sh` or `autopilot.sh`, and
+   reports a question back instead of deciding it — you open the decision.
+   If `next.sh` says `unattended: no`, the work is fine with the user in the
+   conversation, but a loop stops here.
+3. **`action: advance`** — run the command it prints
+   (`bash harness/gates/advance.sh <phase>`, no `--yes`), commit, tick again.
+4. **`action: approve`** (mode `full` only) — mark what you drafted
+   `approved_by: autopilot`, tick again.
+5. **`action: await_human`** (exit 3) — show the user exactly what is waiting
+   (the rendered design, the decision file, the transition), then stop. A loop
+   ends here until they answer.
+6. **`action: done`** (exit 4) — the release has passed. Stop.
+
+In the iteration file, everything above `## Verification` is the approved
+design; `## Verification` and `## Notes` are yours to fill.
 
 ## Gates are executable and pure
 
 Each phase's gate is a runnable script under `harness/gates/`. Run them freely
 via `bash harness/gates/<phase>.sh` — they are pure checks with no side effects.
-Do not advance if a gate fails.
+Exit codes: `0` pass, `1` work is missing, `3` only the user's word is missing
+(approvals are checked last, after everything structural), `2` the environment
+is broken. Do not advance if a gate does not pass.
 
 Phase and iteration transitions happen only via
 `bash harness/gates/advance.sh <phase>` (runs the gate, writes
 `harness/audit/<phase>-<timestamp>.md`, updates `status.yaml`). It advances the
-**current** phase only. The user runs it; you may pass `--yes` only when the
-user explicitly told you to advance.
+**current** phase only. The user runs it, or you do where auto mode carries the
+phase; pass `--yes` only when the user explicitly told you to advance that
+phase. The audit entry records how each transition happened (`interactive`,
+`--yes`, or `autopilot(<mode>)`).
 
 ## Project commands
 
@@ -106,9 +175,10 @@ look at:
 bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o <out>.html --title "<title>" <sources>
 ```
 
-Then show it (`SendUserFile` with `display: "render"`). The `design` gate
-requires a rendered HTML that is not older than the markdown, so re-render
-after editing. Never ask for design approval without showing the diagram.
+Then show it (`SendUserFile` with `display: "render"`). Until a design is
+approved, the `design` gate requires a rendered HTML that is not older than
+the markdown, so re-render after editing. Never ask for design approval
+without showing the diagram.
 
 ## Traceability
 
@@ -126,7 +196,8 @@ Skeletons live in `harness/templates/`.
 ## Status
 
 `harness/status.yaml` is the authoritative phase state. Gates never write it;
-`advance.sh` and `autopilot.sh` do. Approvals live in the artifacts themselves
+`advance.sh` and `autopilot.sh` do, and nobody edits it by hand. Approvals live
+in the artifacts themselves
 as `approved_by:` markers; frontmatter `status:` fields are informational.
 `docs/plan.md` frontmatter is the authority on what the iterations are.
 

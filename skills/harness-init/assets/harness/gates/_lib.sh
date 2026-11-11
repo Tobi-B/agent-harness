@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Shared helpers for harness gates.
 #
-# Contract: gate scripts (discover.sh, architect.sh, ...) are PURE CHECKS.
-# They read files and exit 0/1 — they never mutate status.yaml or write audits.
+# Contract: gate scripts (discover.sh, architect.sh, ...) and next.sh are PURE
+# CHECKS. They read files and exit — they never mutate status.yaml or write
+# audits. Gate exit codes:
+#   0  pass
+#   1  work needed — a structural check failed
+#   2  environment broken — missing tool, wrong yq, bash < 4
+#   3  only the human's word is missing — every structural check passed and an
+#      approval marker (or an open decision) is all that stands in the way
 # State changes happen only through:
-#   - gates/advance.sh   (run by the USER: runs the gate, writes audit, advances phase)
-#   - gates/autopilot.sh (run by the USER: bounded auto-approve for the iteration cycle)
+#   - gates/advance.sh   (runs the gate, writes the audit, moves the phase)
+#   - gates/autopilot.sh (turns auto mode on or off, on the user's instruction)
 # Approvals are plain `approved_by:` markers inside the artifacts themselves,
 # written by the agent only after the user has approved in conversation.
 set -euo pipefail
@@ -94,6 +100,14 @@ fail() {
 
 warn() {
   echo "WARN: $GATE_NAME: $*" >&2
+}
+
+# Exit 3: nothing is left to build or fix here — the human has to speak.
+# next.sh relies on this to tell "work needed" from "waiting" without reading
+# messages, so call it only after every structural check has passed.
+wait_for_human() {
+  echo "WAIT: $GATE_NAME: $*" >&2
+  exit 3
 }
 
 now_iso() {
@@ -284,6 +298,13 @@ require_iteration_gate_passed() {
 # a template's inline `# comment` — is a DRAFT, not an approval. An allowlist
 # rather than "non-empty": agents like placeholders, and a placeholder that
 # silently counts as approval defeats the harness at its core.
+#
+# `autopilot` counts only while auto mode is on, unexpired and in mode `full`
+# (meta-0008). In the default mode `build` autopilot carries transitions and
+# never approves, so there only `user` is an approval — this function is where
+# that boundary is enforced. Validity is judged when a gate runs: markers
+# written under `full` stay in the files as a record, and a gate that already
+# passed is not asked again.
 approved_by_of() {
   local file="$1" val
   val=$(frontmatter_value "$file" "approved_by")
@@ -299,41 +320,103 @@ approved_by_of() {
 
 approval_is_valid() {
   case "$1" in
-    user|autopilot|"user "*|"autopilot "*) return 0 ;;
+    user|"user "*) return 0 ;;
+    autopilot|"autopilot "*) autopilot_may_approve ;;
     *) return 1 ;;
   esac
 }
 
-require_approved() {
+# Why a file does not count as approved, in one line. Silent when it does.
+approval_problem() {
   local file="$1" rel who
   rel=$(rel_to_root "$file")
   who=$(approved_by_of "$file")
-  [ -n "$who" ] \
-    || fail "$rel is not approved — after the user approves, add 'approved_by: user' to its frontmatter (or a '# approved_by: user' comment in a .feature file)"
-  approval_is_valid "$who" \
-    || fail "$rel has 'approved_by: $who' — only 'user' or 'autopilot' count as approval; anything else is a draft"
+  if [ -z "$who" ]; then
+    echo "$rel is not approved — after the user approves, add 'approved_by: user' to its frontmatter (or a '# approved_by: user' comment in a .feature file)"
+    return 0
+  fi
+  approval_is_valid "$who" && return 0
+  case "$who" in
+    autopilot|"autopilot "*)
+      echo "$rel is not approved — 'approved_by: autopilot' counts only while auto mode is on in mode 'full'; the user has to approve it" ;;
+    *)
+      echo "$rel is not approved — it has 'approved_by: $who', and only 'user' or 'autopilot' count; anything else is a draft" ;;
+  esac
+}
+
+# Call LAST in a gate, with every artifact that needs approval: lists all of
+# them that are still waiting, then exits 3. Listing them all means the user
+# is asked once, not once per file.
+require_approved() {
+  local file problem waiting=0
+  for file in "$@"; do
+    problem=$(approval_problem "$file")
+    if [ -n "$problem" ]; then
+      echo "WAIT: $GATE_NAME: $problem" >&2
+      waiting=1
+    fi
+  done
+  [ "$waiting" -eq 0 ] || exit 3
+}
+
+# --- decisions -----------------------------------------------------------------
+#
+# A question the agent may not answer alone becomes docs/decisions/DEC-NNN-*.md
+# carrying the same approval marker as every other artifact. Without a valid
+# marker it is OPEN: autopilot carries nothing and release does not pass. That
+# is the whole format — no status field, no second vocabulary (meta-0008).
+
+DECISIONS_DIR="$DOCS_DIR/decisions"
+
+open_decisions() {
+  local f
+  [ -d "$DECISIONS_DIR" ] || return 0
+  for f in "$DECISIONS_DIR"/DEC-*.md; do
+    [ -e "$f" ] || continue
+    approval_is_valid "$(approved_by_of "$f")" || rel_to_root "$f"
+  done
 }
 
 # --- autopilot ---------------------------------------------------------------
 #
-# Auto mode: WITHOUT it the cycle is human-in-the-loop (the user approves every
-# artifact and every transition); WITH it the agent runs the whole machine
-# alone — every phase except release, which always waits for a human. It stays
-# bounded: wall-clock expiry and an iteration budget act as the emergency
-# brake. Everything here is a pure read; autopilot.sh does the writing,
-# advance.sh spends the budget.
+# Auto mode has two named modes, fixed here in code (meta-0008):
+#
+#   build  (default) the human decides, the agent builds. Autopilot carries the
+#          TRANSITIONS of design/implement/verify and approves nothing: stories,
+#          ADRs, the plan and every iteration design still need the user.
+#   full   the agent runs every phase except release alone and may mark its
+#          own artifacts `approved_by: autopilot`. Has to be asked for by name.
+#
+# Release always waits for a human. Both modes stay bounded: wall-clock expiry
+# and an iteration budget are the emergency brake. Everything here is a pure
+# read; autopilot.sh does the writing, advance.sh spends the budget.
 
-AUTOPILOT_PHASES="discover architect model plan design implement verify"
+AUTOPILOT_PHASES_BUILD="design implement verify"
+AUTOPILOT_PHASES_FULL="discover architect model plan design implement verify"
 
 autopilot_field() {
   yq ".autopilot.$1" "$STATUS_FILE" 2>/dev/null
 }
 
+# A status file written before v8 has no mode: that means build, the mode that
+# hands over less.
+autopilot_mode() {
+  if [ "$(autopilot_field mode)" = "full" ]; then echo full; else echo build; fi
+}
+
 autopilot_phase_in_scope() {
-  case " $AUTOPILOT_PHASES " in
+  local phases="$AUTOPILOT_PHASES_BUILD"
+  [ "$(autopilot_mode)" = "full" ] && phases="$AUTOPILOT_PHASES_FULL"
+  case " $phases " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# May `approved_by: autopilot` count right now? Only in full, and only while
+# auto mode is actually on.
+autopilot_may_approve() {
+  [ "$(autopilot_mode)" = "full" ] && autopilot_on_and_unexpired >/dev/null 2>&1
 }
 
 # On and not expired — ignores the budget. Prints the reason when not.
@@ -379,21 +462,76 @@ autopilot_enabled_and_valid() {
   return 0
 }
 
-# Is autopilot usable for THIS phase right now? The budget counts ITERATIONS:
-# once an iteration is claimed, autopilot finishes it (design → implement →
-# verify) even when that claim used the last unit of budget. Otherwise
-# --max-iterations N would strand iteration N after its design phase.
-autopilot_active_for() {
-  local phase="$1" iter
-  autopilot_phase_in_scope "$phase" || return 1
+# Does autopilot carry THIS phase right now? Prints why not and returns
+# non-zero; silent and zero when it does. This is the one predicate both
+# advance.sh (may I skip the prompt?) and next.sh (what now?) ask, so the two
+# cannot disagree.
+#
+# The budget counts ITERATIONS: once an iteration is claimed, autopilot
+# finishes it (design → implement → verify) even when that claim used the last
+# unit of budget. Otherwise --max-iterations N would strand iteration N after
+# its design phase.
+autopilot_block_reason() {
+  local phase="$1" reason open iter
+  if ! reason=$(autopilot_on_and_unexpired); then
+    echo "$reason"
+    return 1
+  fi
+  if ! autopilot_phase_in_scope "$phase"; then
+    if [ "$phase" = "release" ]; then
+      echo "release always waits for a human — autopilot does not carry 'release'"
+    else
+      echo "autopilot mode '$(autopilot_mode)' does not carry '$phase'"
+    fi
+    return 1
+  fi
+  open=$(open_decisions)
+  if [ -n "$open" ]; then
+    echo "open decision waiting for the user: ${open//$'\n'/, }"
+    return 1
+  fi
   if [ "$(phase_scope "$phase")" = "iteration" ]; then
     iter=$(current_iteration)
     if [ -n "$iter" ] && autopilot_iteration_claimed "$iter"; then
-      autopilot_on_and_unexpired >/dev/null 2>&1
-      return
+      return 0
     fi
   fi
-  autopilot_enabled_and_valid >/dev/null 2>&1
+  if ! reason=$(autopilot_enabled_and_valid); then
+    echo "$reason"
+    return 1
+  fi
+  return 0
+}
+
+autopilot_active_for() {
+  autopilot_block_reason "$1" >/dev/null 2>&1
+}
+
+# Has the current phase been red for longer than the configured timeout?
+# Measured from the later of the phase's started_at (advance.sh records it) and
+# autopilot.enabled_at, so re-enabling auto mode restarts the clock. A finer
+# expiry, not a measure of effort; off unless a timeout was set. Only next.sh
+# asks — a gate that turns green still advances.
+phase_stalled() {
+  local phase="$1" timeout iter started enabled s e ref=0
+  timeout=$(autopilot_field phase_timeout_s)
+  case "$timeout" in ''|null|*[!0-9]*) timeout=0 ;; esac
+  [ "$timeout" -gt 0 ] || return 1
+
+  if [ "$(phase_scope "$phase")" = "iteration" ]; then
+    iter=$(current_iteration)
+    started=$(yq ".iterations.\"${iter}\".${phase}.started_at // \"\"" "$STATUS_FILE")
+  else
+    started=$(yq ".phases.${phase}.started_at // \"\"" "$STATUS_FILE")
+  fi
+  enabled=$(autopilot_field enabled_at)
+  for s in "$started" "$enabled"; do
+    [ -n "$s" ] && [ "$s" != "null" ] || continue
+    e=$(iso_to_epoch "$s" || echo 0)
+    [ -n "$e" ] && [ "$e" -gt "$ref" ] && ref="$e"
+  done
+  [ "$ref" -gt 0 ] || return 1
+  [ $(( $(now_epoch) - ref )) -gt "$timeout" ]
 }
 
 # Has this iteration already been charged against the budget?
@@ -403,18 +541,29 @@ autopilot_iteration_claimed() {
 }
 
 print_autopilot_status() {
-  local reason
-  if reason=$(autopilot_enabled_and_valid); then
-    :
-  fi
-  if autopilot_enabled_and_valid >/dev/null 2>&1; then
-    echo "autopilot: ON"
+  local reason mode phases budget_note=""
+  mode=$(autopilot_mode)
+  phases="$AUTOPILOT_PHASES_BUILD"
+  [ "$mode" = "full" ] && phases="$AUTOPILOT_PHASES_FULL"
+  if reason=$(autopilot_on_and_unexpired); then
+    echo "autopilot: ON (mode: $mode)"
+    # A spent budget does not switch autopilot off: the iteration that spent
+    # it still finishes, only a new one does not start.
+    autopilot_enabled_and_valid >/dev/null 2>&1 \
+      || budget_note="  — spent: a claimed iteration still finishes, no new one starts"
   else
     echo "autopilot: OFF ($reason)"
   fi
-  echo "  scope:              ${AUTOPILOT_PHASES// /, } (everything except release)"
+  echo "  mode:               $mode"
+  echo "  carries:            ${phases// /, }"
+  if [ "$mode" = "full" ]; then
+    echo "  approves:           its own artifacts, as 'approved_by: autopilot'"
+  else
+    echo "  approves:           nothing — approvals stay with the user"
+  fi
   echo "  expires_at:         $(autopilot_field expires_at)"
-  echo "  iterations_used:    $(autopilot_field iterations_used) / $(autopilot_field max_iterations)"
+  echo "  iterations_used:    $(autopilot_field iterations_used) / $(autopilot_field max_iterations)${budget_note}"
+  echo "  phase_timeout_s:    $(autopilot_field phase_timeout_s)"
   echo "  iterations_claimed: $(yq -o=json '.autopilot.iterations_claimed // []' "$STATUS_FILE" | jq -r 'join(", ") | if . == "" then "-" else . end')"
   echo "  enabled_by:         $(autopilot_field enabled_by)"
 }
@@ -434,60 +583,33 @@ project_cfg() {
 }
 
 # --- mutations below: ONLY for advance.sh / autopilot.sh ---
+#
+# status.yaml is changed by ONE yq call per operation. advance.sh used to make
+# about eight, setting current_phase last: an interruption in between left a
+# once-phase passed but still current, and advance.sh then refused it for good.
+# Callers build the expression from fragments and apply it once.
 
-set_status() {
-  local phase="$1"
-  local key="$2"
-  local value="$3"
-  case "$value" in
-    true|false)
-      yq -i ".phases.${phase}.${key} = ${value}" "$STATUS_FILE"
-      ;;
-    *)
-      yq -i ".phases.${phase}.${key} = \"${value}\"" "$STATUS_FILE"
-      ;;
-  esac
-  yq -i ".last_updated = \"$(now_iso)\"" "$STATUS_FILE"
+status_apply() {
+  yq -i "$1" "$STATUS_FILE"
 }
 
-set_current_phase() {
-  local phase="$1"
-  yq -i ".current_phase = \"${phase}\"" "$STATUS_FILE"
-}
-
-set_current_iteration() {
-  local iter="$1"
-  if [ -z "$iter" ]; then
-    yq -i ".current_iteration = null" "$STATUS_FILE"
-  else
-    yq -i ".current_iteration = \"${iter}\"" "$STATUS_FILE"
-    # Ensure the per-iteration record exists (mikefarah yq has no //= operator).
-    yq -i ".iterations.\"${iter}\" = (.iterations.\"${iter}\" // {})" "$STATUS_FILE"
+# The yq fragment that charges an iteration to the autopilot budget. Empty when
+# the iteration is already claimed — a claim is paid for once.
+autopilot_claim_expr() {
+  local iter="$1" used
+  if autopilot_iteration_claimed "$iter"; then
+    return 0
   fi
-}
-
-set_iteration_status() {
-  local iter="$1" phase="$2" key="$3" value="$4"
-  case "$value" in
-    true|false)
-      yq -i ".iterations.\"${iter}\".${phase}.${key} = ${value}" "$STATUS_FILE"
-      ;;
-    *)
-      yq -i ".iterations.\"${iter}\".${phase}.${key} = \"${value}\"" "$STATUS_FILE"
-      ;;
-  esac
-  yq -i ".last_updated = \"$(now_iso)\"" "$STATUS_FILE"
+  used=$(autopilot_field iterations_used)
+  case "$used" in ''|null|*[!0-9]*) used=0 ;; esac
+  echo ".autopilot.iterations_claimed = ((.autopilot.iterations_claimed // []) + [\"${iter}\"]) | .autopilot.iterations_used = $(( used + 1 ))"
 }
 
 autopilot_claim_iteration() {
-  local iter="$1" used
-  autopilot_iteration_claimed "$iter" && return 0
-  used=$(autopilot_field iterations_used)
-  case "$used" in ''|null|*[!0-9]*) used=0 ;; esac
-  export AP_ITER="$iter"
-  yq -i '.autopilot.iterations_claimed += [strenv(AP_ITER)]' "$STATUS_FILE"
-  yq -i ".autopilot.iterations_used = $(( used + 1 ))" "$STATUS_FILE"
-  yq -i ".last_updated = \"$(now_iso)\"" "$STATUS_FILE"
+  local expr
+  expr=$(autopilot_claim_expr "$1")
+  [ -n "$expr" ] || return 0
+  status_apply "$expr | .last_updated = \"$(now_iso)\""
 }
 
 ensure_audit_dir() {
