@@ -2,7 +2,10 @@
 # Pure check — no state mutation. Advance via gates/advance.sh release.
 #
 # Final phase: every planned iteration is verified and the PRD's own success
-# criteria and NFRs are met.
+# criteria and NFRs are met. The gate runs test, lint and acceptance over EVERY
+# planned story (meta-0009) — the release as a whole has to pass, not each
+# iteration once. The PRD checkboxes and the report are the agent's account;
+# the transition is always the user's, and they read it.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE_NAME="release"
@@ -39,6 +42,8 @@ unchecked=$(grep -Ec '^- \[ \]' "$PRD" || true)
 grep -qF "## Result" "$REPORT" || fail "$REPORT missing '## Result' section"
 grep -qF "Success Criteria" "$REPORT" || fail "$REPORT missing 'Success Criteria' section"
 grep -qF "NFR" "$REPORT" || fail "$REPORT missing 'NFR' section"
+
+run_project_commands all
 
 # Last (exit 3): a question the agent put to the user must not ship unanswered.
 open=$(open_decisions)

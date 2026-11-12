@@ -73,7 +73,10 @@ Per phase: **interview → draft → render → user_approves_in_chat → you_ma
   anything irreversible) becomes `harness/docs/decisions/DEC-NNN-<slug>.md`
   with an empty `approved_by:`. While one is open, autopilot carries nothing
   and `release` does not pass. Small reversible choices go into the
-  iteration's `## Notes`.
+  iteration's `## Notes`. If the answer changes a decided artifact, list it
+  under the decision's `references:` — under autopilot, any other change to
+  the PRD, plan, stories, features, ADRs or `project.yaml` trips the wire and
+  stops the loop.
 - **The tick.** `bash harness/gates/next.sh`, then: `work` → one unit, commit;
   `advance` → run the printed `advance.sh` command without `--yes`;
   `approve` (mode `full`) → mark your drafts `approved_by: autopilot`;
@@ -137,11 +140,17 @@ work out for yourself whether auto mode covers a phase — `next.sh` says so.
 - A Python project with a `pyproject.toml` may leave those commands empty
   (pytest / ruff / behave are the fallback). Anything else must fill them in,
   or the gate fails. Missing source, an empty command, and a missing tool all
-  FAIL; only the user may decide to set `HARNESS_ALLOW_MISSING_TOOLS=1`.
+  FAIL; only the user may decide to set `allow_missing_tools: true` in
+  `project.yaml` (the `HARNESS_ALLOW_MISSING_TOOLS=1` hatch is ignored under
+  autopilot).
+- Acceptance runs only the stories due so far: point the command at
+  `$HARNESS_DUE_FEATURES`.
 
 ### verify (per iteration)
 - Fill `## Verification` in the iteration file, reporting on **every** story of
-  that iteration, and check off the items. Unchecked boxes fail the gate.
+  that iteration, and check off the items. Unchecked boxes fail the gate, and
+  the gate runs test, lint and acceptance again — the boxes are your account,
+  the commands the evidence.
 - Advancing past `verify` either starts the next iteration's `design` or moves
   to `release` — the user decides when to advance, or auto mode does while it
   carries `verify`.
@@ -150,6 +159,7 @@ work out for yourself whether auto mode covers a phase — `next.sh` says so.
 - Measure NFRs, compare against PRD Success Criteria, check off every PRD
   checkbox, write `docs/verify-report.md` with `## Result`, `Success Criteria`,
   and `NFR` sections. Add a short retro.
+- The gate runs test, lint and acceptance over every planned story.
 - The gate fails while any decision is open, and the transition is always the
   user's.
 

@@ -80,6 +80,7 @@ The loop, and who does what:
 | `bash harness/gates/<phase>.sh` (pure check) | agent, freely |
 | Approve an artifact ("approved" in chat) | **user** — then the agent records `approved_by: user` in the file |
 | `bash harness/gates/next.sh` (pure: what now, whose move) | agent, at the start of every tick |
+| `bash harness/gates/report.sh` (pure: what happened since autopilot went on) | anyone, anytime |
 | `bash harness/gates/advance.sh <phase>` | **user** (agent only with `--yes` on explicit instruction, or where auto mode carries the phase) |
 | Answer an open decision (`docs/decisions/DEC-*.md`) | **user** — then the agent records the answer and `approved_by: user` |
 | `bash harness/gates/autopilot.sh on\|off\|status` | **user decision** — agent runs `on` only on explicit chat instruction |
@@ -110,7 +111,13 @@ code (0 go on, 3 the user's move, 4 done). `/harness` is one tick of that, so
 Claude Code's built-in `/loop /harness` runs the project until something
 waits for the user: an unapproved design, an open decision
 (`harness/docs/decisions/DEC-NNN-*.md`), a transition that is theirs, or the
-release. The rules are in the project's `AGENTS.md`.
+release. While autopilot runs, a change to anything the user decided (PRD,
+plan, stories, features, ADRs, `project.yaml`) stops it unless an answered
+decision covers it; `bash harness/gates/report.sh` shows what happened. The
+`implement`, `verify` and `release` gates run the project's own commands, so
+fill in `harness/project.yaml` once the stack is decided — and point the
+acceptance runner at `$HARNESS_DUE_FEATURES`. The rules are in the project's
+`AGENTS.md`.
 
 ## Notes
 

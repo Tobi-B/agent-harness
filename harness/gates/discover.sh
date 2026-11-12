@@ -44,6 +44,8 @@ for story in "${stories[@]}"; do
   needs_approval+=("$story" "$feature")
 done
 
-require_approved "${needs_approval[@]}"
+# The PRD is what everything traces back to: the user approves it like every
+# other artifact (meta-0009).
+require_approved "$PRD" "${needs_approval[@]}"
 
 pass

@@ -3,6 +3,10 @@
 #
 # Iteration-scoped: did THIS iteration deliver what its design promised?
 # Project-wide success criteria and NFRs are checked by the release gate.
+#
+# Evidence, not checkboxes (meta-0009): the gate runs test, lint and acceptance
+# again — the code may have changed since implement passed. The checkboxes in
+# '## Verification' are the agent's account; the commands are the evidence.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE_NAME="verify"
@@ -37,5 +41,7 @@ done
 remaining=$(grep -c '^- \[ \]' <<<"$section" || true)
 [ "$remaining" -eq 0 ] \
   || fail "$ITER_MD has $remaining unchecked '- [ ]' items under '## Verification'"
+
+run_project_commands "$iter"
 
 pass

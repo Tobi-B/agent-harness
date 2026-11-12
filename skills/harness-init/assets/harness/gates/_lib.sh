@@ -472,7 +472,7 @@ autopilot_enabled_and_valid() {
 # unit of budget. Otherwise --max-iterations N would strand iteration N after
 # its design phase.
 autopilot_block_reason() {
-  local phase="$1" reason open iter
+  local phase="$1" reason open changed iter
   if ! reason=$(autopilot_on_and_unexpired); then
     echo "$reason"
     return 1
@@ -488,6 +488,11 @@ autopilot_block_reason() {
   open=$(open_decisions)
   if [ -n "$open" ]; then
     echo "open decision waiting for the user: ${open//$'\n'/, }"
+    return 1
+  fi
+  changed=$(tripwire_changes)
+  if [ -n "$changed" ]; then
+    echo "decided artifacts changed since autopilot was switched on, and no answered decision references them: ${changed//$'\n'/, } — open a decision, or the user re-enables autopilot to accept the change"
     return 1
   fi
   if [ "$(phase_scope "$phase")" = "iteration" ]; then
@@ -566,6 +571,20 @@ print_autopilot_status() {
   echo "  phase_timeout_s:    $(autopilot_field phase_timeout_s)"
   echo "  iterations_claimed: $(yq -o=json '.autopilot.iterations_claimed // []' "$STATUS_FILE" | jq -r 'join(", ") | if . == "" then "-" else . end')"
   echo "  enabled_by:         $(autopilot_field enabled_by)"
+  local base changed
+  base=$(tripwire_base)
+  if [ -z "$base" ]; then
+    echo "  tripwire:           off — no base commit (recorded when autopilot is switched on in a git repo)"
+  elif ! tripwire_available; then
+    echo "  tripwire:           off — not a git work tree"
+  else
+    changed=$(tripwire_changes)
+    if [ -n "$changed" ]; then
+      echo "  tripwire:           TRIPPED since ${base:0:7}: ${changed//$'\n'/, }"
+    else
+      echo "  tripwire:           on since ${base:0:7} — decided artifacts unchanged"
+    fi
+  fi
 }
 
 # --- project config (harness/project.yaml) --------------------------------
@@ -580,6 +599,205 @@ project_cfg() {
   v=$(yq "$1" "$PROJECT_FILE")
   [ "$v" = "null" ] && v=""
   echo "$v"
+}
+
+# --- project commands: implement, verify and release all run them -----------
+#
+# A gate that the agent can satisfy by writing text is a checklist, not a gate
+# (meta-0009). So implement, verify and release run the same commands, from
+# the project root, every time they are asked. Nothing is cached: a cached
+# result is the one answer that can go stale.
+
+FEATURES_DIR="$HARNESS_ROOT/tests/features"
+
+# Story ids of every iteration up to and including $1, in plan order. Earlier
+# iterations stay in, so acceptance doubles as a regression check. Pass "all"
+# (or any id the plan does not have) for every planned story.
+due_stories() {
+  local upto="$1" id
+  while read -r id; do
+    [ -n "$id" ] || continue
+    plan_iteration_field "$id" "stories[]"
+    [ "$id" = "$upto" ] && break
+  done < <(plan_iteration_ids)
+}
+
+# Feature files of the given stories, relative to the project root.
+due_features() {
+  local s f
+  for s in "$@"; do
+    for f in "$FEATURES_DIR/${s}.feature" "$FEATURES_DIR/${s}"-*.feature; do
+      [ -f "$f" ] || continue
+      case "$f" in
+        "$PROJECT_ROOT"/*) echo "${f#"$PROJECT_ROOT"/}" ;;
+        *) echo "$f" ;;
+      esac
+    done
+  done
+}
+
+# The escape hatch for missing tools belongs to the project: `allow_missing_tools`
+# in project.yaml. HARNESS_ALLOW_MISSING_TOOLS=1 still works for a human at a
+# terminal, but not while autopilot carries the phase — there only the file
+# counts, and the file is guarded by the tripwire.
+missing_tools_allowed() {
+  [ "$(project_cfg '.allow_missing_tools')" = "true" ] && return 0
+  [ "${HARNESS_ALLOW_MISSING_TOOLS:-0}" = "1" ] || return 1
+  ! autopilot_active_for "$GATE_NAME"
+}
+
+soft_fail() {
+  if missing_tools_allowed; then
+    warn "$* — skipped (missing tools allowed)"
+    return 0
+  fi
+  if [ "${HARNESS_ALLOW_MISSING_TOOLS:-0}" = "1" ]; then
+    fail "$* (HARNESS_ALLOW_MISSING_TOOLS is ignored while autopilot carries '$GATE_NAME' — only allow_missing_tools in harness/project.yaml counts, and changing it is the user's decision)"
+  fi
+  fail "$* (to skip explicitly: allow_missing_tools: true in harness/project.yaml, or HARNESS_ALLOW_MISSING_TOOLS=1 at a terminal)"
+}
+
+project_command() {
+  local kind="$1" cmd
+  cmd=$(project_cfg ".commands.$kind")
+  if [ -z "$cmd" ] && [ -f "$PROJECT_ROOT/pyproject.toml" ]; then
+    # $HARNESS_DUE_FEATURES stays literal: the bash -c that runs it expands it.
+    # shellcheck disable=SC2016
+    case "$kind" in
+      test)       cmd="pytest -q" ;;
+      lint)       cmd="ruff check ." ;;
+      acceptance) cmd='behave $HARNESS_DUE_FEATURES --no-capture --no-color' ;;
+    esac
+  fi
+  echo "$cmd"
+}
+
+run_project_command() {
+  local kind="$1" cmd tool log
+  cmd=$(project_command "$kind")
+  if [ -z "$cmd" ]; then
+    soft_fail "no '$kind' command configured in harness/project.yaml (commands.$kind)"
+    return 0
+  fi
+  # First word of the command, skipping leading VAR=value assignments.
+  tool="$cmd"
+  while [[ "$tool" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+(.*)$ ]]; do
+    tool="${BASH_REMATCH[1]}"
+  done
+  tool="${tool%% *}"
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    soft_fail "'$kind' command needs '$tool', which is not in PATH"
+    return 0
+  fi
+  echo "run [$kind]: $cmd"
+  log=$(mktemp)
+  if ! (cd "$PROJECT_ROOT" && bash -c "$cmd") >"$log" 2>&1; then
+    tail -40 "$log" >&2
+    rm -f "$log"
+    fail "'$kind' failed: $cmd"
+  fi
+  tail -3 "$log"
+  rm -f "$log"
+}
+
+# Runs test, lint and acceptance for the stories due by iteration $1 ("all" for
+# release). Every command sees HARNESS_DUE_STORIES and HARNESS_DUE_FEATURES
+# (space-separated; feature paths relative to the project root).
+run_project_commands() {
+  local upto="$1" due_ids
+  mapfile -t due_ids < <(due_stories "$upto")
+  HARNESS_DUE_STORIES="${due_ids[*]}"
+  HARNESS_DUE_FEATURES="$(due_features "${due_ids[@]}" | tr '\n' ' ')"
+  HARNESS_DUE_FEATURES="${HARNESS_DUE_FEATURES% }"
+  export HARNESS_DUE_STORIES HARNESS_DUE_FEATURES
+  run_project_command test
+  run_project_command lint
+  run_project_command acceptance
+}
+
+# --- tripwire: decided artifacts change only through a decision (meta-0009) --
+#
+# `autopilot.sh on` records the commit it was switched on at. While autopilot
+# is on, a change to something the user decided — committed, uncommitted or a
+# new file — stops it, unless an answered decision references that artifact.
+# Re-enabling autopilot moves the base: that is how the user accepts a change
+# without a decision. Without git, or without a recorded base, it is off.
+
+# Is this path (relative to harness/) one the user decided?
+decided_path() {
+  case "$1" in
+    docs/prd.md|docs/plan.md|docs/architecture.md) return 0 ;;
+    docs/user_stories/US-*.md|tests/features/US-*.feature|docs/adrs/*.md) return 0 ;;
+    project.yaml|workflow.yaml|dor_dod.yaml|gates/*|templates/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Does an answered decision reference this path? By id for stories, features
+# and ADRs (US-003 covers US-003-*.md and US-003-*.feature, ADR-0002 covers
+# 0002-*.md), by file name or path otherwise (plan.md, project.yaml).
+covered_by_decision() {
+  local path="$1" name id d ref
+  name=$(basename "$path")
+  id=""
+  if [[ "$name" =~ ^(US-[0-9]+) ]]; then
+    id="${BASH_REMATCH[1]}"
+  elif [[ "$name" =~ ^([0-9]{4})-.*\.md$ ]]; then
+    id="ADR-${BASH_REMATCH[1]}"
+  fi
+  [ -d "$DECISIONS_DIR" ] || return 1
+  for d in "$DECISIONS_DIR"/DEC-*.md; do
+    [ -e "$d" ] || continue
+    approval_is_valid "$(approved_by_of "$d")" || continue
+    while read -r ref; do
+      [ -n "$ref" ] || continue
+      if [ "$ref" = "$name" ] || [ "$ref" = "$path" ] \
+         || { [ -n "$id" ] && [ "$ref" = "$id" ]; }; then
+        return 0
+      fi
+    done < <(frontmatter_yaml "$d" | yq '.references // [] | .[]' 2>/dev/null)
+  done
+  return 1
+}
+
+tripwire_base() {
+  local b
+  b=$(autopilot_field base_commit)
+  [ "$b" = "null" ] && b=""
+  echo "$b"
+}
+
+tripwire_available() {
+  command -v git >/dev/null 2>&1 \
+    && git -C "$HARNESS_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+# Decided paths that differ from $1 (default: the recorded base), relative to
+# harness/, one per line. Pass "HEAD" to see uncommitted changes only.
+decided_changes_since() {
+  local base="${1:-$(tripwire_base)}" f
+  [ -n "$base" ] && tripwire_available || return 0
+  if ! git -C "$HARNESS_ROOT" rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+    echo "(the tripwire's base commit $base no longer exists — re-enable autopilot)"
+    return 0
+  fi
+  {
+    git -C "$HARNESS_ROOT" diff --name-only --relative "$base" -- . 2>/dev/null
+    git -C "$HARNESS_ROOT" ls-files --others --exclude-standard -- . 2>/dev/null
+  } | sort -u | while read -r f; do
+    [ -n "$f" ] && decided_path "$f" && echo "$f"
+  done
+  return 0
+}
+
+# What trips the wire: decided changes no answered decision covers.
+tripwire_changes() {
+  local f
+  decided_changes_since "" | while read -r f; do
+    [ -n "$f" ] || continue
+    covered_by_decision "$f" || echo "$f"
+  done
+  return 0
 }
 
 # --- mutations below: ONLY for advance.sh / autopilot.sh ---

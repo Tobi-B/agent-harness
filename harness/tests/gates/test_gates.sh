@@ -111,6 +111,9 @@ mkdir -p "$FIXTURE/docs/user_stories" "$FIXTURE/docs/uml" \
          "$FIXTURE/docs/adrs" "$FIXTURE/docs/iterations" "$FIXTURE/tests/features"
 
 cat > "$FIXTURE/docs/prd.md" <<'EOF'
+---
+approved_by: user
+---
 # PRD
 ## Goals
 - goal
@@ -119,6 +122,11 @@ cat > "$FIXTURE/docs/prd.md" <<'EOF'
 ## Non-Functional Requirements
 - [ ] nfr one
 EOF
+
+# The fixture has no source and no test tooling. Under autopilot only the
+# project's own switch counts (meta-0009), not HARNESS_ALLOW_MISSING_TOOLS.
+printf 'allow_missing_tools: true
+' > "$FIXTURE/project.yaml"
 
 make_story() {
   local id="$1"
@@ -830,6 +838,181 @@ t_out "next.sh: in mode full the approval is the agent's to give" "action: *appr
 sed -i '0,/^---$/s/^---$/---\napproved_by: autopilot/' "$FIXTURE/docs/iterations/ITER-02.md"
 t "full advances a design the agent approved itself" auto_advance design
 autopilot off >/dev/null
+
+# =============================================================================
+# v9 (meta-0009): evidence, not checkboxes
+# =============================================================================
+#
+# A copy of the fixture inside a project root, so feature paths come out
+# relative ("harness/tests/features/..."), the way a real installation sees
+# them. The commands write what they were given into the project root.
+
+V9P="$(mktemp -d)"
+V9="$V9P/harness"
+mkdir -p "$V9"
+cp -r "$FIXTURE/." "$V9/"
+rm -rf "$V9/docs/decisions" "$V9/audit"
+mkdir -p "$V9/docs/decisions" "$V9P/src"
+echo 'ok' > "$V9P/src/app.txt"
+v9() { env HARNESS_ROOT="$V9" HARNESS_PROJECT_ROOT="$V9P" HARNESS_ALLOW_MISSING_TOOLS="${ALLOW:-0}" \
+         bash "$GATES_DIR/$1" "${@:2}"; }
+v9_status() { yq -i "$1" "$V9/status.yaml"; }
+due() { cat "$V9P/due.txt"; }
+
+cat > "$V9/docs/plan.md" <<'EOF'
+---
+approved_by: user
+iterations:
+  - id: ITER-01
+    goal: first
+    stories: [US-001]
+  - id: ITER-02
+    goal: second
+    stories: [US-002]
+---
+# Plan
+EOF
+cat > "$V9/project.yaml" <<'EOF'
+source_dirs: [src]
+commands:
+  test: test ! -f broken
+  lint: "true"
+  acceptance: printf '%s|%s' "$HARNESS_DUE_STORIES" "$HARNESS_DUE_FEATURES" > due.txt
+EOF
+v9_status '.current_phase = "implement" | .current_iteration = "ITER-01"
+           | .iterations = {"ITER-01": {"design": {"gate_passed": true}}}
+           | .phases.release.gate_passed = false
+           | .autopilot.enabled = false | .autopilot.base_commit = null'
+
+# --- acceptance covers what is due -------------------------------------------
+
+t "implement runs the project commands" v9 implement.sh
+t "ITER-01 acceptance sees only ITER-01's story and feature" \
+  test "$(due)" = "US-001|harness/tests/features/US-001-test.feature"
+v9_status '.current_iteration = "ITER-02" | .iterations."ITER-02".design.gate_passed = true'
+t "implement in ITER-02 passes" v9 implement.sh
+t "ITER-02 acceptance keeps ITER-01's feature as a regression check" \
+  test "$(due)" = "US-001 US-002|harness/tests/features/US-001-test.feature harness/tests/features/US-002-test.feature"
+v9_status '.current_iteration = "ITER-01"'
+
+# --- verify runs the commands again --------------------------------------------
+
+v9_status '.current_phase = "verify" | .iterations."ITER-01".implement.gate_passed = true'
+cat > "$V9/docs/iterations/ITER-01.md" <<'EOF'
+---
+id: ITER-01
+approved_by: user
+---
+# ITER-01
+## Verification
+- [x] US-001 verified
+EOF
+t "verify passes on green commands and a complete account" v9 verify.sh
+touch "$V9P/broken"
+t_msg "verify fails when the code broke after implement passed" "'test' failed" v9 verify.sh
+rm -f "$V9P/broken"
+
+# --- release runs them over every story ---------------------------------------
+
+v9_status '.current_phase = "release"
+           | .iterations."ITER-02" = {"design": {"gate_passed": true}, "implement": {"gate_passed": true}, "verify": {"gate_passed": true}}
+           | .iterations."ITER-01".verify.gate_passed = true'
+sed -i 's/- \[ \]/- [x]/' "$V9/docs/prd.md"
+t "release passes and runs the commands" v9 release.sh
+t "release acceptance sees every planned story" \
+  test "$(due)" = "US-001 US-002|harness/tests/features/US-001-test.feature harness/tests/features/US-002-test.feature"
+touch "$V9P/broken"
+t_msg "release fails when the suite fails, whatever the checkboxes say" "'test' failed" v9 release.sh
+rm -f "$V9P/broken"
+
+# --- the escape hatch belongs to the project ----------------------------------
+
+v9_status '.current_phase = "implement"'
+yq -i '.commands.lint = ""' "$V9/project.yaml"
+t_msg "an empty command still fails" "no 'lint' command configured" v9 implement.sh
+ALLOW=1 t "HARNESS_ALLOW_MISSING_TOOLS works at a terminal" v9 implement.sh
+v9 autopilot.sh on --by tester >/dev/null
+ALLOW=1 t_msg "…and is ignored while autopilot carries the phase" "ignored while autopilot carries 'implement'" \
+  v9 implement.sh
+yq -i '.allow_missing_tools = true' "$V9/project.yaml"
+t "allow_missing_tools in project.yaml counts under autopilot" v9 implement.sh
+v9 autopilot.sh off >/dev/null
+yq -i '.commands.lint = "true" | del(.allow_missing_tools)' "$V9/project.yaml"
+
+# --- the PRD carries an approval like everything else -------------------------
+
+sed -i '/^approved_by:/d' "$V9/docs/prd.md"
+t_rc "discover exits 3 while the PRD is not approved" 3 v9 discover.sh
+t_msg "…and names it" "prd.md is not approved" v9 discover.sh
+sed -i '0,/^---$/s/^---$/---\napproved_by: user/' "$V9/docs/prd.md"
+t "discover passes once the PRD is approved" v9 discover.sh
+
+# --- tripwire: decided artifacts change only through a decision ---------------
+
+t_out "without git the tripwire is off, and status says so" "tripwire: *off" \
+  bash -c "HARNESS_ROOT='$FIXTURE' bash '$GATES_DIR/autopilot.sh' status || true"
+
+g() { git -C "$V9P" -c user.name=tester -c user.email=tester@example.invalid -c core.autocrlf=false "$@"; }
+g init -q
+g add -A
+g commit -q -m "baseline"
+
+echo "edited" >> "$V9/docs/user_stories/US-001-test.md"
+t_msg "autopilot on refuses uncommitted changes to decided artifacts" "uncommitted changes" \
+  v9 autopilot.sh on --by tester
+g checkout -q -- harness/docs/user_stories/US-001-test.md
+t "autopilot on records the base commit" v9 autopilot.sh on --by tester
+t "…which is HEAD" test "$(yq '.autopilot.base_commit' "$V9/status.yaml")" = "$(g rev-parse HEAD)"
+t_out "status reports the tripwire as on" "tripwire: *on since" v9 autopilot.sh status
+
+# Not `next.sh | grep`: under pipefail next.sh's exit 3 would fail the pipe
+# even when grep matched — and every "not tripped" check would pass vacuously.
+tripped() { local out; out=$(v9 next.sh 2>&1 || true); grep -q 'decided artifacts changed' <<<"$out"; }
+t_fails "nothing changed: the wire is not tripped" tripped
+
+echo "edited" >> "$V9/docs/user_stories/US-001-test.md"
+t_rc "an edited story stops the loop" 3 v9 next.sh
+t "…and next.sh says why" tripped
+t_msg "advance.sh refuses to carry a transition past it" "decided artifacts changed" \
+  bash -c "HARNESS_ROOT='$V9' HARNESS_PROJECT_ROOT='$V9P' bash '$GATES_DIR/advance.sh' implement < /dev/null"
+g add -A; g commit -q -m "edit US-001"
+t "committing the edit does not hide it" tripped
+
+cat > "$V9/docs/decisions/DEC-001-change-us-001.md" <<'EOF'
+---
+id: DEC-001
+approved_by: user
+references:
+  - US-001
+---
+# DEC-001 Reword US-001
+EOF
+t_fails "an answered decision referencing US-001 covers the change" tripped
+sed -i '/^approved_by:/d' "$V9/docs/decisions/DEC-001-change-us-001.md"
+t_msg "an open decision does not cover it — it is waiting itself" "decide — answer in chat" v9 next.sh
+sed -i '0,/^---$/s/^---$/---\napproved_by: user/' "$V9/docs/decisions/DEC-001-change-us-001.md"
+
+mkdir -p "$V9/tests/features/steps"
+echo "# steps" > "$V9/tests/features/steps/us_001.py"
+t_fails "step code is the agent's work, not a decided artifact" tripped
+
+echo "# changed" >> "$V9/project.yaml"
+t "a changed project.yaml trips it" tripped
+t_out "status reports it as tripped" "TRIPPED" v9 autopilot.sh status
+g add -A; g commit -q -m "change project.yaml"
+v9 autopilot.sh on --by tester >/dev/null
+t_fails "re-enabling autopilot accepts the change" tripped
+
+# --- report.sh: what happened while I was away --------------------------------
+
+t_out "report lists the answered decision" "answered (user): DEC-001" v9 report.sh
+t_out "report lists the commits since the base" "## Commits" v9 report.sh
+t_out "report shows the next.sh verdict" "action:" v9 report.sh
+sum_before=$(cksum < "$V9/status.yaml")
+v9 report.sh >/dev/null 2>&1 || true
+t "report.sh is pure" test "$sum_before" = "$(cksum < "$V9/status.yaml")"
+v9 autopilot.sh off >/dev/null
+rm -rf "$V9P"
 
 # -----------------------------------------------------------------------------
 

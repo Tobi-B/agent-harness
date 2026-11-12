@@ -95,7 +95,9 @@ them silently and do not bury them in a note: open a decision,
 recommendation — and leave `approved_by:` empty. While any decision is open,
 autopilot carries nothing and `release` does not pass: the machine waits. When
 the user answers in chat, record the answer under `## Decision` and write
-`approved_by: user`.
+`approved_by: user`. If the answer changes an artifact the user decided, list
+that artifact under the decision's `references:` (`US-003`, `ADR-0002`,
+`plan.md`, `project.yaml`) — that is what lets the change past the tripwire.
 
 Open a decision when:
 
@@ -104,8 +106,8 @@ Open a decision when:
 - an architectural choice is not covered by an ADR: a new dependency, a schema,
   a public interface, anything security-relevant;
 - a story cannot be built as specified;
-- a command in `harness/project.yaml` would change, or
-  `HARNESS_ALLOW_MISSING_TOOLS` would be set;
+- a command in `harness/project.yaml` would change, or missing tools would
+  have to be allowed;
 - a hardcap would be exceeded;
 - something is irreversible or leaves the machine (publishing, deleting,
   sending).
@@ -113,6 +115,19 @@ Open a decision when:
 Small, reversible choices are yours: make them and record them under
 `## Notes` in the iteration file. That an open decision stops the machine is
 enforced by the gates; recognising when to open one is on you.
+
+**The tripwire backs this up.** `autopilot.sh on` records the commit it starts
+from (decided artifacts must be committed first). While autopilot is on, a
+change to something the user decided — the PRD, `plan.md`,
+`architecture.md`, a story, a feature file, an ADR, `project.yaml`, or the
+harness itself — stops the loop, committed or not, unless an answered
+decision references that artifact. Re-enabling autopilot is how the user
+accepts a change without one. Approved iteration designs are not on that list:
+changing one after approval is a decision too, but only this file says so.
+
+**Coming back:** `bash harness/gates/report.sh` (pure) shows what happened
+since autopilot was switched on — transitions and how each happened,
+decisions, iteration notes, commits, and what `next.sh` says now.
 
 ## One tick
 
@@ -158,13 +173,26 @@ phase. The audit entry records how each transition happened (`interactive`,
 
 ## Project commands
 
-`harness/project.yaml` tells the `implement` gate where the code lives
-(`source_dirs`) and how to test, lint and run the acceptance features
-(`commands.test`, `commands.lint`, `commands.acceptance`). Commands run from
-the project root. Fill it in during `architect`, once the stack is decided,
-and confirm the commands with the user. It is project-owned: editing it needs
-no meta ADR. An empty command fails the gate — never set one to `true` to make
-the gate pass; that is the same kind of lie as a fabricated approval.
+`harness/project.yaml` tells the gates where the code lives (`source_dirs`)
+and how to test, lint and run the acceptance features (`commands.test`,
+`commands.lint`, `commands.acceptance`). Commands run from the project root.
+`implement`, `verify` and `release` all run them — a gate re-runs the suite
+every time it is asked, so the checkboxes in `## Verification` and the PRD are
+your account, never the evidence.
+
+Every command sees `HARNESS_DUE_STORIES` and `HARNESS_DUE_FEATURES`: the
+stories of every iteration up to the current one and their feature files
+(relative to the project root; at `release`, all of them). Point the
+acceptance runner at `$HARNESS_DUE_FEATURES`, or ITER-01 fails on the
+undefined steps of later stories.
+
+Fill it in during `architect`, once the stack is decided, and confirm the
+commands with the user. It is project-owned: editing it needs no meta ADR, but
+under autopilot a change trips the wire (above). An empty command fails the
+gate — never set one to `true` to make the gate pass; that is the same kind of
+lie as a fabricated approval. `allow_missing_tools: true` (docs-only repos) is
+the user's call; `HARNESS_ALLOW_MISSING_TOOLS=1` works only at a terminal and
+is ignored while autopilot carries the phase.
 
 ## Show designs before asking for approval
 
@@ -213,8 +241,10 @@ ADR, user approval, version bump. Do not edit `workflow.yaml` ad-hoc.
 - whatever the `project.yaml` commands call; a Python project with
   `pyproject.toml` and no configured commands defaults to `pytest`, `ruff`,
   `behave`
-- missing tools or unconfigured commands FAIL the implement gate unless
-  `HARNESS_ALLOW_MISSING_TOOLS=1`
+- missing tools or unconfigured commands FAIL the implement, verify and
+  release gates unless `allow_missing_tools: true` in `project.yaml` (or
+  `HARNESS_ALLOW_MISSING_TOOLS=1` at a terminal, not under autopilot)
+- `git` for the tripwire and the report's commit list
 
 Install with `winget install MikeFarah.yq jqlang.jq` (Windows, gates run in Git
 Bash), `brew install bash yq jq` (macOS). Python tools via

@@ -18,6 +18,11 @@
 #               forgotten autopilot cannot run away.
 #   * stall   — optional: a phase that stays red longer than --phase-timeout
 #               is handed back to the user by next.sh.
+#   * tripwire — the commit it is switched on at is recorded; a later change to
+#               something the user decided (PRD, plan, stories, features, ADRs,
+#               project.yaml, the workflow itself) stops autopilot unless an
+#               answered decision covers it. Switching it on again accepts the
+#               change. Needs git; decided artifacts must be committed first.
 #   * audit   — enabling it, and every transition it carries, is written to
 #               the audit trail.
 #
@@ -33,7 +38,7 @@ GATE_NAME="autopilot"
 . "$SCRIPT_DIR/_lib.sh"
 
 usage() {
-  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 [ $# -ge 1 ] || { usage; exit 2; }
@@ -102,10 +107,22 @@ case "$action" in
     [ -n "$by" ] || by=$(git config user.name 2>/dev/null || true)
     [ -n "$by" ] || by="${USER:-${USERNAME:-unknown}}"
 
+    # The tripwire compares against this commit. Uncommitted changes to decided
+    # artifacts would trip it at once, so they have to be committed first.
+    base=""
+    if tripwire_available && git -C "$HARNESS_ROOT" rev-parse --verify --quiet HEAD >/dev/null; then
+      dirty=$(decided_changes_since HEAD)
+      [ -z "$dirty" ]         || fail "decided artifacts have uncommitted changes — commit them first, the tripwire compares against HEAD: ${dirty//$'
+'/, }"
+      base=$(git -C "$HARNESS_ROOT" rev-parse HEAD)
+    fi
+    tripwire="on (base ${base:0:7})"
+    [ -n "$base" ] || tripwire="off — no git commit to compare against"
+
     ts=$(now_iso)
     expires_at=$(iso_in_seconds "$seconds")
 
-    export AP_BY="$by" AP_AT="$ts" AP_EXP="$expires_at" AP_MODE="$mode"
+    export AP_BY="$by" AP_AT="$ts" AP_EXP="$expires_at" AP_MODE="$mode" AP_BASE="$base"
     status_apply "
       .autopilot.enabled = true
       | .autopilot.mode = strenv(AP_MODE)
@@ -116,6 +133,7 @@ case "$action" in
       | .autopilot.iterations_used = 0
       | .autopilot.iterations_claimed = []
       | .autopilot.phase_timeout_s = ${timeout_s}
+      | .autopilot.base_commit = strenv(AP_BASE)
       | .autopilot.disabled_at = null
       | del(.autopilot.scope)
       | .last_updated = strenv(AP_AT)"
@@ -140,6 +158,7 @@ case "$action" in
 - **expires**: $expires_at
 - **budget**: $max_iterations iteration(s)
 - **phase timeout**: $stall
+- **tripwire**: $tripwire
 EOF
 
     cat <<EOF
@@ -149,9 +168,11 @@ autopilot: ON (mode: $mode)
   expires:    $expires_at
   budget:     $max_iterations iteration(s)
   stall:      $stall
+  tripwire:   $tripwire
   enabled by: $by
 
-release always stops for your approval, and so does any open decision.
+release always stops for your approval, and so does any open decision or any
+change to what you decided.
 Ask what comes next:  bash gates/next.sh
 Turn it off any time: bash gates/autopilot.sh off
 EOF

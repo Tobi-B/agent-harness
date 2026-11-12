@@ -83,6 +83,22 @@ cannot be built as written — it writes `docs/decisions/DEC-NNN-<slug>.md`
 decision is open, autopilot carries nothing and `release` does not pass. You
 answer in chat; the agent records the answer and the marker.
 
+**Tripwire.** `autopilot.sh on` records the commit it starts from. A later
+change to something you decided — PRD, plan, architecture, stories, features,
+ADRs, `project.yaml`, the harness itself — stops autopilot, unless an answered
+decision references that artifact. Re-enabling autopilot accepts the change.
+Needs git; decided artifacts have to be committed before switching it on.
+
+## What happened while I was away?
+
+```bash
+bash gates/report.sh
+```
+
+Pure. Since autopilot was switched on: transitions and how each happened,
+decisions (open and answered), the iterations' `## Notes`, commits, and the
+current `next.sh` verdict.
+
 ## What now?
 
 ```bash
@@ -124,6 +140,7 @@ harness — see `tools/sync-skill.sh` in the source repo.
 | `gates/<phase>.sh` | Pure phase checks — no state mutation. Exit 0 pass, 1 work missing, 3 only your approval missing, 2 environment. |
 | `gates/next.sh` | Pure: "what now?" — one action and whose move it is. The question a loop asks every tick. |
 | `gates/advance.sh` | Gate + audit + status update + phase/iteration transition. Yours, or the agent's where auto mode carries the phase. |
+| `gates/report.sh` | Pure: what happened since autopilot was switched on. |
 | `gates/autopilot.sh` | Auto mode on/off — run only on the user's explicit instruction; modes `build`/`full`, bounded by expiry + budget. |
 | `init.sh` | Install the harness into another project. |
 | `tests/gates/test_gates.sh` | Self-tests for the gates themselves. |
@@ -138,11 +155,16 @@ harness — see `tools/sync-skill.sh` in the source repo.
 - `design` requires a rendered HTML that is not older than the markdown until
   the design is approved — you cannot approve a design nobody could look at,
   or an obviously stale one.
-- `implement` runs the commands from `project.yaml` in the **project root** (the
-  directory containing `harness/`). No source, an unconfigured command or a
-  missing tool **fails** it; `HARNESS_ALLOW_MISSING_TOOLS=1` downgrades those to
-  warnings. A command that runs and fails is never downgraded. TODO/FIXME in
-  delivered code fails it — comments included.
+- `implement`, `verify` and `release` run the commands from `project.yaml` in
+  the **project root** (the directory containing `harness/`), every time —
+  evidence, not checkboxes. Acceptance gets `HARNESS_DUE_FEATURES`: the stories
+  due so far (all of them at `release`). No source, an unconfigured command or
+  a missing tool **fails** the gate; `allow_missing_tools: true` in
+  `project.yaml` downgrades those to warnings (`HARNESS_ALLOW_MISSING_TOOLS=1`
+  too, but not under autopilot). A command that runs and fails is never
+  downgraded. TODO/FIXME in delivered code fails `implement` — comments
+  included.
+- `discover` requires the PRD to carry `approved_by: user`.
 - `advance.sh` only advances the **current** phase — it cannot rewind or skip.
 - Gates check structure first and approvals last, and exit 3 instead of 1
   when only an approval is missing.

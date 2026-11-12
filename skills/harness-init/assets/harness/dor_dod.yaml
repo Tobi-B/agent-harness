@@ -15,6 +15,7 @@ discover:
     - prd_has_success_criteria
     - user_is_available_for_interview
   definition_of_done:
+    - prd_approved
     - all_user_stories_approved
     - one_feature_file_per_story
     - traceability_frontmatter_on_each_story
@@ -84,9 +85,8 @@ implement:
 verify:
   definition_of_ready:
     - iteration_implement_gate_passed
-    - tests_pass
-    - lint_clean
   definition_of_done:
+    - tests_lint_acceptance_pass_for_due_stories   # the gate runs them again
     - verification_section_reports_every_iteration_story
     - all_verification_items_checked
     - iteration_verify_gate_passed_true
@@ -99,6 +99,7 @@ release:
     - prd_success_criteria_verified
     - nfr_targets_measured
     - verify_report_md_complete
+    - tests_lint_acceptance_pass_for_every_story   # the gate runs them
     - no_open_decisions
     - retro_written (manual)
     - status_yaml_phase_release_completed_true
