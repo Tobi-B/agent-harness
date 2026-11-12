@@ -1,6 +1,13 @@
+---
+approved_by:
+---
+
+<!-- approved_by stays empty in drafts. The agent writes 'approved_by: user'
+     only after the user approved the PRD in chat. The discover gate waits
+     (exit 3) while it is empty. -->
+
 # Product Requirements Document
 
-**Status**: draft | approved
 **Owner**: 
 **Last updated**: 
 

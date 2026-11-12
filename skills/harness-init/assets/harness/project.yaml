@@ -2,20 +2,32 @@
 #
 # Not part of the workflow contract: editing this file is normal project work
 # and needs no meta ADR. Commands run from the project root (the directory
-# that contains harness/). A failing command fails the gate; an EMPTY command
-# fails it too (unless HARNESS_ALLOW_MISSING_TOOLS=1), so a gate can never
-# pass just because nobody configured the tests.
+# that contains harness/). implement, verify and release all run them. A
+# failing command fails the gate; an EMPTY command or a missing tool fails it
+# too (unless allow_missing_tools: true), so a gate can never pass just because
+# nobody configured the tests.
+#
+# Every command sees two variables (meta-0009):
+#   HARNESS_DUE_STORIES   story ids due so far, e.g. "US-001 US-002"
+#   HARNESS_DUE_FEATURES  their feature files, relative to the project root
+# "Due" means every iteration up to and including the current one; release
+# sets both to every planned story. Point the acceptance runner at
+# $HARNESS_DUE_FEATURES, or later iterations' undefined steps fail ITER-01.
 #
 # Python projects with a pyproject.toml may leave commands empty: the gate
-# then uses pytest -q / ruff check . / behave harness/tests/features.
+# then uses pytest -q / ruff check . / behave $HARNESS_DUE_FEATURES.
+#
+# Under autopilot, changing this file is a decision for the user: the tripwire
+# stops the loop until a decision covers it or the user re-enables autopilot.
 
 source_dirs: [src]      # where delivered code lives (TODO/FIXME scan + existence check)
 todo_check: true        # fail on TODO/FIXME in source_dirs, comments included
+allow_missing_tools: false  # true: missing source/commands/tools only warn (docs-only repos)
 
 commands:
   test: ""              # unit tests
   lint: ""              # lint / format / type check — chain with && if several
-  acceptance: ""        # runs harness/tests/features/*.feature
+  acceptance: ""        # runs the due features: $HARNESS_DUE_FEATURES
 
 # Examples
 #
@@ -31,4 +43,4 @@ commands:
 #   commands:
 #     test:       npx vitest run
 #     lint:       npx eslint src && npx tsc --noEmit
-#     acceptance: npx cucumber-js harness/tests/features
+#     acceptance: npx cucumber-js $HARNESS_DUE_FEATURES

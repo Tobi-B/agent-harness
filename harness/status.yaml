@@ -23,6 +23,7 @@ autopilot:
   iterations_used: 0
   iterations_claimed: []
   phase_timeout_s: 0
+  base_commit: null      # tripwire: the commit autopilot was switched on at
   disabled_at: null
 phases:
   discover:

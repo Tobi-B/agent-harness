@@ -87,6 +87,18 @@ if [ -n "$open" ]; then
   exit 3
 fi
 
+# The tripwire (meta-0009): while autopilot is on, something the user decided
+# changed and no answered decision covers it. Same rank as an open decision.
+if autopilot_on_and_unexpired >/dev/null 2>&1; then
+  changed=$(tripwire_changes)
+  if [ -n "$changed" ]; then
+    say action "await_human"
+    say needs_human "decided artifacts changed under autopilot — open a decision that references them, or the user re-enables autopilot to accept the change"
+    printf '%s\n' "$changed" | sed 's/^/  /'
+    exit 3
+  fi
+fi
+
 case "$gate_rc" in
   3)
     # Only the human's word is missing. In mode full autopilot may give it.

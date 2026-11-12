@@ -1,8 +1,8 @@
 ---
 id: meta-0009
-status: proposed
+status: accepted
 date: 2026-11-11
-approved_by:
+approved_by: user (2026-11-11, in chat — option 3)
 references:
   - meta-0006-hardening-and-stack-neutral-implement.md
   - meta-0007-pull-based-slices-and-subagent-per-story.md
@@ -12,8 +12,8 @@ references:
 # meta-0009 Evidence, not checkboxes: gates that run, and decided artifacts that stay decided
 
 Meta ADR (workflow change, exempt from the project ADR hardcap — see
-`WORKFLOW_CHANGES.md`). Proposed; nothing under `workflow.yaml` or `gates/`
-changes before the user approves it.
+`WORKFLOW_CHANGES.md`). Approved by the user before any change to
+`workflow.yaml` or `gates/` was made.
 
 ## Context and Problem Statement
 
@@ -80,7 +80,7 @@ nothing to do with the project.
 
 ## Decision Outcome
 
-Proposed: **option 3**.
+Chosen option: **option 3**, approved by the owner in chat.
 
 Option 1 runs the pilot into gap 3 and measures a defect instead of the
 workflow. Option 2 makes the loop's claims true but leaves the owner's

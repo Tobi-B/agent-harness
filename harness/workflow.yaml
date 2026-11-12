@@ -1,4 +1,4 @@
-version: 8
+version: 9
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
@@ -8,6 +8,8 @@ name: lean-harness
 # agent only after the user approved in conversation — no hashes, no registry.
 # A gate exits 1 when work is needed and 3 when only the human's word is
 # missing; gates/next.sh turns that into the one action a loop takes next.
+# implement, verify and release run the project commands themselves — evidence,
+# not checkboxes (meta-0009).
 #
 # Shape:
 #   discover → architect → model → plan → ⟳(design → implement → verify) → release
@@ -33,6 +35,7 @@ phases:
       run: gates/discover.sh
       checks:
         - prd_has_goals_nfrs_success_criteria_with_checkboxes
+        - prd_carries_approved_by_marker
         - story_count_within_hardcap
         - each_story_has_id_references_role_want_so_that_acceptance_criteria
         - each_story_has_1to1_feature_file
@@ -164,8 +167,8 @@ phases:
         - no_todo_fixme_in_source_including_comments
         - project_test_command_passes            # project.yaml commands.test; pytest -q for Python by default
         - project_lint_command_passes            # commands.lint; ruff check . for Python by default
-        - project_acceptance_command_passes      # commands.acceptance; behave for Python by default
-        - unconfigured_command_or_missing_tool_fails_unless_explicitly_allowed
+        - project_acceptance_command_passes_for_due_stories   # commands.acceptance sees HARNESS_DUE_FEATURES; behave for Python by default
+        - unconfigured_command_or_missing_tool_fails_unless_project_allows_it   # allow_missing_tools in project.yaml; the env hatch is ignored under autopilot
     audit: audit/implement-*.md
     next: verify
 
@@ -186,6 +189,7 @@ phases:
         - iteration_file_has_verification_section
         - verification_section_reports_on_every_iteration_story
         - no_unchecked_items_under_verification
+        - project_commands_pass_for_due_stories   # run again: the code may have changed since implement
     audit: audit/verify-*.md
     next: design                      # loop back for the next iteration
     next_when_iterations_done: release
@@ -208,6 +212,7 @@ phases:
         - every_planned_iteration_passed_design_implement_verify
         - all_prd_checkbox_criteria_checked_off
         - verify_report_has_result_success_criteria_nfr_sections
+        - project_commands_pass_for_every_planned_story
         - no_open_decisions
     audit: audit/release-*.md
     next: null
@@ -218,6 +223,7 @@ agent:
   approval_marker: "approved_by: user | autopilot"   # frontmatter in .md, '# approved_by:' comment in .feature — `user` written by the agent ONLY after the user approved in conversation; `autopilot` counts only in auto mode `full`
   advance_tool: gates/advance.sh    # the user, or the agent with --yes on explicit instruction, or autopilot for the phases its mode carries; advances the CURRENT phase only
   autopilot_tool: gates/autopilot.sh  # agent runs it ONLY on the user's explicit chat instruction
+  report_tool: gates/report.sh      # pure; what happened since autopilot was switched on
   render_tool: ~/.claude/skills/mermaid-render/render.sh
   user_in_the_loop_required_for:    # in auto mode `build` too; mode `full` hands all but the last two to the agent
     - adr_decisions
@@ -254,6 +260,22 @@ autopilot:
   enable: gates/autopilot.sh on [--mode build|full] [--expires 8h] [--max-iterations 3] [--phase-timeout 2h]
   disable: gates/autopilot.sh off
   bounded_by: [expires_at, max_iterations, phase_timeout_s]   # a claimed iteration is finished even on a spent budget; expiry always stops; an open decision always stops
+  tripwire:                         # meta-0009: decided artifacts change only through a decision
+    base: status.yaml#autopilot.base_commit   # recorded by `autopilot.sh on`; needs git
+    decided_paths:
+      - docs/prd.md
+      - docs/plan.md
+      - docs/architecture.md
+      - docs/user_stories/US-*.md
+      - tests/features/US-*.feature
+      - docs/adrs/*.md
+      - project.yaml
+      - workflow.yaml
+      - dor_dod.yaml
+      - gates/
+      - templates/
+    covered_by: an answered decision whose references name the artifact (US-NNN, ADR-NNNN, or the file name)
+    accept_without_decision: the user re-enables autopilot
   status_file: status.yaml
   audit_dir: audit/
 

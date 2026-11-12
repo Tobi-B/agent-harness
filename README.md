@@ -57,6 +57,14 @@ wall-clock expiry and an iteration budget, and `release` always waits for a
 person. See
 [`meta-0008`](harness/docs/adrs/meta-0008-decision-gated-autonomy.md).
 
+**Evidence, not checkboxes.** `implement`, `verify` and `release` run the
+project's own test, lint and acceptance commands every time they are asked;
+what the agent ticks off is its account, not the proof. While autopilot runs,
+a change to anything you decided trips a wire and stops it, unless you
+answered a decision that covers it — and `gates/report.sh` tells you what
+happened while you were away. See
+[`meta-0009`](harness/docs/adrs/meta-0009-evidence-not-checkboxes.md).
+
 ## Install into your project
 
 ```bash

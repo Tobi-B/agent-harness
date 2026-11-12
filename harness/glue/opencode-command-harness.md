@@ -44,11 +44,16 @@ run by hand or in a loop (`/loop /harness`). Do this now:
    `harness/docs/decisions/DEC-NNN-<slug>.md`
    (`harness/templates/decision.template.md`) with an empty `approved_by:`.
    The machine then waits for the user. Small reversible choices go into the
-   iteration's `## Notes`.
+   iteration's `## Notes`. When an answer changes a decided artifact, list it
+   under the decision's `references:` — under autopilot, any other change to
+   the PRD, plan, stories, features, ADRs or `project.yaml` trips the wire and
+   stops the loop.
 
 5. **Project commands.** From `architect` on, `harness/project.yaml` must name
    the real test / lint / acceptance commands for this stack (confirm with the
-   user). Never stub one with `true` to get past the `implement` gate.
+   user). Never stub one with `true` to get past a gate — `implement`,
+   `verify` and `release` all run them. Point acceptance at
+   `$HARNESS_DUE_FEATURES` (the stories due so far).
 
 6. **Transitions.** `bash harness/gates/advance.sh <phase>` is the user's
    action unless `next.sh` said `advance`; pass `--yes` only when they
