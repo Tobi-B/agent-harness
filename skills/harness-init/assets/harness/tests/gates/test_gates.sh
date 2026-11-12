@@ -965,7 +965,9 @@ t "autopilot on records the base commit" v9 autopilot.sh on --by tester
 t "…which is HEAD" test "$(yq '.autopilot.base_commit' "$V9/status.yaml")" = "$(g rev-parse HEAD)"
 t_out "status reports the tripwire as on" "tripwire: *on since" v9 autopilot.sh status
 
-tripped() { v9 next.sh 2>&1 | grep -q 'decided artifacts changed'; }
+# Not `next.sh | grep`: under pipefail next.sh's exit 3 would fail the pipe
+# even when grep matched — and every "not tripped" check would pass vacuously.
+tripped() { local out; out=$(v9 next.sh 2>&1 || true); grep -q 'decided artifacts changed' <<<"$out"; }
 t_fails "nothing changed: the wire is not tripped" tripped
 
 echo "edited" >> "$V9/docs/user_stories/US-001-test.md"
@@ -987,7 +989,7 @@ references:
 EOF
 t_fails "an answered decision referencing US-001 covers the change" tripped
 sed -i '/^approved_by:/d' "$V9/docs/decisions/DEC-001-change-us-001.md"
-t_msg "an open decision does not cover it — it is waiting itself" "open decision" v9 next.sh
+t_msg "an open decision does not cover it — it is waiting itself" "decide — answer in chat" v9 next.sh
 sed -i '0,/^---$/s/^---$/---\napproved_by: user/' "$V9/docs/decisions/DEC-001-change-us-001.md"
 
 mkdir -p "$V9/tests/features/steps"
