@@ -23,6 +23,22 @@ for section in "## Goal" "## Approach" "## Affected Components" "## Test Strateg
   grep -qF "$section" "$ITER_MD" || fail "$ITER_MD missing section: $section"
 done
 
+# meta-0010: the two questions a cold subagent would otherwise answer alone.
+# The gate checks that they were answered (non-empty body, "none" is fine),
+# not that the answer is good — that is what the design review is for.
+section_body() {
+  awk -v h="$2" '
+    $0 == h { on = 1; next }
+    on && /^## / { exit }
+    on { print }
+  ' "$1" | tr '
+' ' ' | sed 's/<!--[^>]*-->//g' | tr -d '[:space:]'
+}
+for section in "## Interfaces" "## NFR impact"; do
+  grep -qxF "$section" "$ITER_MD" || fail "$ITER_MD missing section: $section"
+  [ -n "$(section_body "$ITER_MD" "$section")" ]     || fail "$ITER_MD has an empty '$section' section — name what it covers, or write 'none'"
+done
+
 grep -q '^[[:space:]]*```mermaid' "$ITER_MD" \
   || fail "$ITER_MD has no \`\`\`mermaid diagram — the design must be visual"
 

@@ -65,6 +65,8 @@ answered a decision that covers it — and `gates/report.sh` tells you what
 happened while you were away. See
 [`meta-0009`](harness/docs/adrs/meta-0009-evidence-not-checkboxes.md).
 
+**What the pilot showed.** A finding at `release` can become an iteration of its own: `advance.sh reopen` goes back, but only for you and only after you answered a decision that changes `plan.md`. Every design names its interfaces and which non-functional requirements it touches, so a fresh subagent per story builds to the same boundary. And autopilot's expiry never strands an iteration it already started. See [`meta-0010`](harness/docs/adrs/meta-0010-pilot-findings.md).
+
 ## Install into your project
 
 ```bash

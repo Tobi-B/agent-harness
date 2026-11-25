@@ -44,6 +44,19 @@ sequenceDiagram
 |---|---|---|
 |  |  | `uml/c4-component.mmd` |
 
+## Interfaces
+
+<!-- The design gate fails while this section is empty. Name and sign every
+     function or type that crosses a module boundary in this iteration (new or
+     changed), so a fresh subagent per story builds to the same boundary
+     instead of inventing one. Write 'none' if nothing crosses one. -->
+
+## NFR impact
+
+<!-- The design gate fails while this section is empty. Which of the PRD's
+     non-functional requirements can this iteration affect, and how is each one
+     measured here (not first at release)? Write 'none' if none. -->
+
 ## Test Strategy
 
 - Unit: ...

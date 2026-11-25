@@ -1,8 +1,8 @@
 ---
 id: meta-0010
-status: proposed
+status: accepted
 date: 2026-11-22
-approved_by:
+approved_by: user (2026-11-22, in chat — core, options 2 without the backlog)
 references:
   - meta-0008-decision-gated-autonomy.md
   - meta-0009-evidence-not-checkboxes.md
@@ -11,9 +11,8 @@ references:
 # meta-0010 What the pilot showed: a way back from release, designs that name their interfaces and NFRs, an expiry that does not strand a run
 
 Meta ADR (workflow change, exempt from the project ADR hardcap — see
-`WORKFLOW_CHANGES.md`). **Proposed** — nothing in `workflow.yaml` or `gates/`
-changes until the user approves it (set `status: accepted` and
-`approved_by: user`).
+`WORKFLOW_CHANGES.md`). **Accepted** — approved by the user before any change to `workflow.yaml` or
+`gates/` was made. The optional backlog (item 4) was not taken.
 
 meta-0007 (pull-based slices) was withdrawn by the owner on 2026-11-22 and its
 file deleted; its text stays in git history. Its subagent-per-story half
@@ -76,8 +75,8 @@ in this ADR".
 
 ## Decision Outcome
 
-Proposed option: **2**. Option 3 is available as an add-on if the owner wants
-it — see its weak evidence below.
+Chosen option: **2**. Option 3 was offered as an add-on and not taken — see its
+weak evidence below.
 
 ### 1. `advance.sh reopen` — back from `release`, by decision only
 
@@ -85,7 +84,8 @@ When `current_phase` is `release` and `release` has not passed, the **user** can
 run `bash harness/gates/advance.sh reopen`. It succeeds only when:
 
 - an answered decision (`approved_by: user`) that **references `plan.md`**
-  exists and is newer than the last release attempt, and
+  exists and has not been spent on a reopen before (its id is recorded under
+  `reopens:` in `status.yaml`; one decision reopens once), and
 - `plan.md` now lists at least one iteration whose `design`, `implement` and
   `verify` gates have not passed (the new iteration the decision asked for).
 
@@ -136,8 +136,8 @@ nothing now and it can follow when a real project reorders work.
 Extend `tests/gates/test_gates.sh`, one check per claim:
 
 - `reopen` refuses with no answered decision referencing `plan.md`, with an
-  unanswered one, with a decision older than the last release attempt, with an
-  unchanged plan, and under autopilot; it succeeds with all of them in place
+  unanswered one, with a decision that was already spent, with an unchanged
+  plan, and under autopilot; it succeeds with all of them in place
   and leaves `current_phase: design`, the new iteration current, an audit entry
   with `via reopen (DEC-NNN)`, and the release phase reset.
 - `design` fails without `## Interfaces`, without `## NFR impact`, and with

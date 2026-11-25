@@ -362,6 +362,10 @@ sequenceDiagram
 \`\`\`
 ## Affected Components
 c
+## Interfaces
+none
+## NFR impact
+none
 ## Test Strategy
 t
 ## Verification
@@ -377,6 +381,21 @@ render_design() {
 }
 
 make_design ITER-01 US-001
+D1="$FIXTURE/docs/iterations/ITER-01.md"
+cp "$D1" "$D1.keep"
+sed -i '/^## Interfaces$/,/^none$/d' "$D1"
+t_msg "design fails without an Interfaces section" "missing section: ## Interfaces" bash "$GATES_DIR/design.sh"
+cp "$D1.keep" "$D1"
+sed -i '/^## NFR impact$/,/^none$/d' "$D1"
+t_msg "design fails without an NFR impact section" "missing section: ## NFR impact" bash "$GATES_DIR/design.sh"
+cp "$D1.keep" "$D1"
+sed -i '/^## Interfaces$/{n;s/^none$//}' "$D1"
+t_msg "design fails on an empty Interfaces section" "empty '## Interfaces'" bash "$GATES_DIR/design.sh"
+cp "$D1.keep" "$D1"
+sed -i '/^## NFR impact$/{n;s/^none$/<!-- a leftover template comment -->/}' "$D1"
+t_msg "…and one that holds only a template comment" "empty '## NFR impact'" bash "$GATES_DIR/design.sh"
+cp "$D1.keep" "$D1"
+rm -f "$D1.keep"
 t_msg "design fails without rendered html" "missing rendered" bash "$GATES_DIR/design.sh"
 
 render_design ITER-01
@@ -584,8 +603,12 @@ t_fails "an unclaimed iteration still needs budget" bash -c "
   . '$GATES_DIR/_lib.sh'; autopilot_active_for design"
 yq -i '.autopilot.expires_at = "2020-01-01T00:00:00Z"' "$FIXTURE/status.yaml"
 yq -i '.current_iteration = "ITER-01"' "$FIXTURE/status.yaml"
-t_fails "expiry stops even a claimed iteration" bash -c "
+t "expiry does not strand a claimed iteration (meta-0010)" bash -c "
   . '$GATES_DIR/_lib.sh'; autopilot_active_for implement"
+yq -i '.current_iteration = "ITER-02"' "$FIXTURE/status.yaml"
+t_fails "…but expiry still refuses an unclaimed one" bash -c "
+  . '$GATES_DIR/_lib.sh'; autopilot_active_for design"
+yq -i '.current_iteration = "ITER-01"' "$FIXTURE/status.yaml"
 autopilot off >/dev/null
 
 # --- v7: implement gate — project root, configured commands, no silent pass --
@@ -1011,6 +1034,103 @@ t_out "report shows the next.sh verdict" "action:" v9 report.sh
 sum_before=$(cksum < "$V9/status.yaml")
 v9 report.sh >/dev/null 2>&1 || true
 t "report.sh is pure" test "$sum_before" = "$(cksum < "$V9/status.yaml")"
+# --- v10 (meta-0010): reopen from release, expiry, designs name their interfaces
+
+# Fixture state: every planned iteration through design/implement/verify, the
+# release gate not passed, nothing decided yet.
+v9_status '.current_phase = "release" | .current_iteration = null
+           | .phases.release.gate_passed = false
+           | .phases.release.started_at = "2026-01-01T00:00:00Z"
+           | .iterations."ITER-01" = {"design": {"gate_passed": true}, "implement": {"gate_passed": true}, "verify": {"gate_passed": true}}
+           | .iterations."ITER-02" = {"design": {"gate_passed": true}, "implement": {"gate_passed": true}, "verify": {"gate_passed": true}}
+           | .autopilot.enabled = false'
+rm -rf "$V9/docs/decisions" "$V9/audit"
+mkdir -p "$V9/docs/decisions"
+
+t_msg "reopen needs an answered decision that references plan.md" "no answered decision" \
+  v9 advance.sh reopen --yes
+
+cat > "$V9/docs/decisions/DEC-002-add-iteration.md" <<'EOF'
+---
+id: DEC-002
+references:
+  - plan.md
+---
+# DEC-002 Add an iteration for the release finding
+EOF
+t_msg "…an unanswered one does not count" "no answered decision" v9 advance.sh reopen --yes
+sed -i '0,/^---$/s/^---$/---\napproved_by: user/' "$V9/docs/decisions/DEC-002-add-iteration.md"
+t_msg "…an answered one is not enough while the plan has nothing new" "no iteration that still has to" \
+  v9 advance.sh reopen --yes
+
+# The plan gains ITER-03 (story US-003, approved), under the user's marker.
+cat > "$V9/docs/user_stories/US-003-test.md" <<'EOF'
+---
+id: US-003
+approved_by: user
+---
+# US-003 the release finding
+EOF
+cat > "$V9/docs/plan.md" <<'EOF'
+---
+approved_by: user
+iterations:
+  - id: ITER-01
+    goal: first
+    stories: [US-001]
+  - id: ITER-02
+    goal: second
+    stories: [US-002]
+  - id: ITER-03
+    goal: third
+    stories: [US-003]
+---
+# Plan
+EOF
+t_msg "reopen is the user's: no terminal and no --yes stops it" "requires user approval" \
+  bash -c "HARNESS_ROOT='$V9' HARNESS_PROJECT_ROOT='$V9P' bash '$GATES_DIR/advance.sh' reopen < /dev/null"
+v9_status '.autopilot.enabled = true | .autopilot.expires_at = "2999-01-01T00:00:00Z" | .autopilot.max_iterations = 9 | .autopilot.mode = "full"'
+t_msg "…autopilot does not carry it, even in mode full" "requires user approval" \
+  bash -c "HARNESS_ROOT='$V9' HARNESS_PROJECT_ROOT='$V9P' bash '$GATES_DIR/advance.sh' reopen < /dev/null"
+v9_status '.autopilot.enabled = false'
+
+t_msg "reopen only goes back from release" "goes back from 'release'" \
+  bash -c "yq -i '.current_phase = \"verify\"' '$V9/status.yaml'; HARNESS_ROOT='$V9' HARNESS_PROJECT_ROOT='$V9P' bash '$GATES_DIR/advance.sh' reopen --yes"
+v9_status '.current_phase = "release"'
+
+t_out "reopen goes back with the decision and the new plan" "reopened: current_phase = design (iteration ITER-03)" \
+  v9 advance.sh reopen --yes
+t "…current_phase is design" test "$(yq '.current_phase' "$V9/status.yaml")" = "design"
+t "…current_iteration is the new one" test "$(yq '.current_iteration' "$V9/status.yaml")" = "ITER-03"
+t "…the decision is spent" test "$(yq '.reopens[0]' "$V9/status.yaml")" = "DEC-002"
+t "…release starts over" test "$(yq '.phases.release.gate_passed' "$V9/status.yaml")" = "false"
+t "…the audit says how it happened" grep -rq "reopen (DEC-002)" "$V9/audit"
+
+v9_status '.current_phase = "release" | .current_iteration = null'
+t_msg "one decision reopens once" "no answered decision" v9 advance.sh reopen --yes
+v9_status '.phases.release.gate_passed = true'
+t_msg "a finished workflow cannot be reopened" "already passed" v9 advance.sh reopen --yes
+
+# --- the expiry stops new iterations, never a claimed one ----------------------
+
+blk() {
+  env HARNESS_ROOT="$V9" HARNESS_PROJECT_ROOT="$V9P" \
+    bash -c ". '$GATES_DIR/_lib.sh'; autopilot_block_reason $1"
+}
+v9_status '.current_phase = "implement" | .current_iteration = "ITER-03"
+           | .phases.release.gate_passed = false
+           | .autopilot.enabled = true | .autopilot.mode = "build"
+           | .autopilot.expires_at = "2000-01-01T00:00:00Z"
+           | .autopilot.max_iterations = 1 | .autopilot.iterations_used = 1
+           | .autopilot.iterations_claimed = ["ITER-03"] | .autopilot.base_commit = null'
+t "an iteration claimed before the expiry still finishes" blk implement
+t_msg "…but the expiry refuses a new iteration" "expired" bash -c "yq -i '.autopilot.iterations_claimed = []' '$V9/status.yaml'; HARNESS_ROOT='$V9' HARNESS_PROJECT_ROOT='$V9P' bash -c \". '$GATES_DIR/_lib.sh'; autopilot_block_reason implement\""
+v9_status '.autopilot.iterations_claimed = ["ITER-03"] | .autopilot.enabled = false'
+t_msg "a switched-off autopilot carries nothing, claimed or not" "off" blk implement
+v9_status '.autopilot.enabled = true'
+t_out "next.sh says the claimed iteration still finishes" "still finishes" v9 next.sh
+v9 autopilot.sh off >/dev/null
+
 v9 autopilot.sh off >/dev/null
 rm -rf "$V9P"
 

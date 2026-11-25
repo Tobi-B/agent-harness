@@ -13,13 +13,14 @@
 # Anything else stops here, so an agent cannot advance silently.
 #
 # Usage: bash gates/advance.sh <phase> [--yes]
+#        bash gates/advance.sh reopen [--yes]   (back from release, see below)
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE_NAME="advance"
 # shellcheck source=_lib.sh
 . "$SCRIPT_DIR/_lib.sh"
 
-[ $# -ge 1 ] || fail "usage: bash gates/advance.sh <phase> [--yes]"
+[ $# -ge 1 ] || fail "usage: bash gates/advance.sh <phase|reopen> [--yes]"
 phase="$1"
 shift
 assume_yes=0
@@ -30,6 +31,75 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# --- reopen: the one way back from release (meta-0010) ------------------------
+#
+# A finding at release can need an iteration of its own. The phase machine only
+# moves forward, so this is the explicit, decision-gated exception: the user
+# answered a decision that references plan.md, and plan.md now lists an
+# iteration that has not been through design/implement/verify. Always the
+# user's (--yes or the prompt) - autopilot never carries it, release being
+# the user's. One decision reopens once.
+if [ "$phase" = "reopen" ]; then
+  current=$(yq '.current_phase' "$STATUS_FILE")
+  [ "$current" = "release" ] \
+    || fail "reopen goes back from 'release' (current_phase: $current)"
+  [ "$(yq '.phases.release.gate_passed // false' "$STATUS_FILE")" != "true" ] \
+    || fail "release has already passed - the workflow is complete, there is nothing to reopen"
+
+  dec=$(reopen_decisions plan.md | head -n 1 || true)
+  [ -n "$dec" ] \
+    || fail "no answered decision (approved_by: user) that references plan.md and is still unused - open one: what changes in the plan, and why"
+  dec_id="${dec%%$'\t'*}"
+
+  bash "$SCRIPT_DIR/plan.sh" >/dev/null 2>&1 \
+    || fail "plan.md does not pass its gate (bash gates/plan.sh) - the changed plan needs the user's approval marker and must cover every story"
+
+  new_iter=""
+  while read -r id; do
+    [ -n "$id" ] || continue
+    if [ "$(iteration_gate_passed "$id" design)" != "true" ] \
+       || [ "$(iteration_gate_passed "$id" implement)" != "true" ] \
+       || [ "$(iteration_gate_passed "$id" verify)" != "true" ]; then
+      new_iter="$id"
+      break
+    fi
+  done < <(plan_iteration_ids)
+  [ -n "$new_iter" ] \
+    || fail "plan.md lists no iteration that still has to go through design, implement and verify - add one first"
+
+  if [ "$assume_yes" -eq 1 ]; then
+    via="--yes (the harness cannot tell who asked for it)"
+  elif [ ! -t 0 ]; then
+    fail "reopen requires user approval: run interactively or pass --yes on explicit user instruction"
+  else
+    printf "Reopen the workflow from release, as %s (decision %s)? [y/N] " "$new_iter" "$dec_id"
+    read -r answer
+    case "$answer" in
+      y|Y|yes|YES) via="interactive" ;;
+      *) echo "aborted"; exit 1 ;;
+    esac
+  fi
+
+  ts=$(now_iso)
+  expr=".current_phase = \"design\" | .current_iteration = \"${new_iter}\""
+  expr="$expr | .iterations.\"${new_iter}\".design.started_at = \"${ts}\""
+  expr="$expr | .phases.release.gate_passed = false | .phases.release.started_at = null | .phases.release.completed_at = null"
+  expr="$expr | .reopens = ((.reopens // []) + [\"${dec_id}\"]) | .last_updated = \"${ts}\""
+  status_apply "$expr"
+
+  GATE_NAME="reopen" write_audit <<EOF
+# Audit: reopen from release
+
+- **result**: PASS
+- **at**: $ts
+- **iteration**: $new_iter
+- **next**: design ($new_iter)
+- **transition via**: reopen ($dec_id) - $via
+EOF
+  echo "reopened: current_phase = design (iteration $new_iter), decision $dec_id spent"
+  exit 0
+fi
+
 known=$(yq ".phases[] | select(.id == \"$phase\") | .id" "$WORKFLOW_FILE")
 [ "$known" = "$phase" ] || fail "unknown phase '$phase' (not in workflow.yaml)"
 
@@ -37,7 +107,7 @@ known=$(yq ".phases[] | select(.id == \"$phase\") | .id" "$WORKFLOW_FILE")
 
 # Only the CURRENT phase can be advanced. Advancing an earlier phase whose gate
 # still passes would rewind current_phase and wipe current_iteration; advancing
-# a later one would skip work. Reopening a phase is a deliberate, manual edit.
+# a later one would skip work. The one way back is `reopen`, from release (below).
 current=$(yq '.current_phase' "$STATUS_FILE")
 [ "$phase" = "$current" ] \
   || fail "'$phase' is not the current phase (current_phase: $current) — only the current phase can be advanced"
