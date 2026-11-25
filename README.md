@@ -1,134 +1,111 @@
 # agent-harness
 
-A documentation-driven development workflow for coding agents, with **executable
-gates** and **human approval** where it matters.
-
-Most agent workflows are a prompt that says "please follow these steps". This one
-is a phase machine whose every rule is a bash script that exits 0 or 1. The agent
-can run the checks freely; it cannot make a failing gate pass by being persuasive.
+**A phase machine for coding agents: the agent builds, you decide, and bash
+scripts — not prompts — check that both happened.**
 
 ```
 discover → architect → model → plan → ⟳( design → implement → verify ) → release
 ```
 
-Each phase produces specific artifacts, and each has a gate script that checks
-them. `design`, `implement`, and `verify` are iteration-scoped — they run once per
-iteration in the plan, then loop.
+Every phase ends in a gate: a pure bash script that exits `0` (pass), `1` (work
+missing), `3` (only your approval missing) or `2` (environment broken). The
+agent can run gates as often as it likes; it cannot talk a failing one into
+passing.
 
-## What's in this repo
+## Core ideas
 
-| Path | What it is |
+1. **Gates are executable and pure.** Every check in
+   [`workflow.yaml`](harness/workflow.yaml) is enforced by a script. Only
+   `advance.sh` changes state — it runs the gate, writes an audit entry, and
+   refuses to move past a failure.
+2. **Approval is your word.** You say "approved" in chat; only then does the
+   agent write `approved_by: user` into the artifact. No hash, no registry — so
+   the rule is absolute. ([meta-0004](harness/docs/adrs/meta-0004-trusted-approval-markers.md))
+3. **Evidence, not checkboxes.** `implement`, `verify` and `release` run the
+   project's own test, lint and acceptance commands every time.
+   ([meta-0009](harness/docs/adrs/meta-0009-evidence-not-checkboxes.md))
+4. **Ask, don't guess.** A question that isn't the agent's to answer becomes
+   `docs/decisions/DEC-NNN-*.md`; while it is open, the machine stops.
+   ([meta-0008](harness/docs/adrs/meta-0008-decision-gated-autonomy.md))
+
+## What each phase produces
+
+| Phase | Output |
 |---|---|
-| [`harness/`](harness/) | The harness itself — phases, gates, templates, docs. **Start here:** [`harness/README.md`](harness/README.md) |
-| [`skills/harness-init/`](skills/harness-init/) | Claude Code skill that scaffolds the harness into any project (carries its own copy of `harness/`) |
-| [`skills/mermaid-render/`](skills/mermaid-render/) | Claude Code skill that makes Mermaid diagrams reviewable: a published Artifact by default, `render.sh` for a local HTML file (which the `design` gate needs) |
-| [`AGENTS.md`](AGENTS.md) | Portable agent contract — readable by any agent, no tool-specific setup |
-| [`tools/`](tools/) | `install-skills.sh`, `sync-skill.sh` (keeps the skill's bundled copy in sync) |
+| discover | PRD, user stories, one Gherkin `.feature` per story |
+| architect | ≤ 3 ADRs, `architecture.md`, real commands in `project.yaml` |
+| model | C4, sequence and state diagrams (Mermaid, traced to sources) |
+| plan | `plan.md` — stories sliced into iterations `ITER-NN` |
+| design | per iteration: a diagrammed design, **rendered and shown** before approval |
+| implement | TDD per story, one fresh subagent each |
+| verify | `## Verification` in the iteration file; commands re-run |
+| release | `verify-report.md` against the PRD's success criteria and NFRs |
 
-This repo *is* a harness installation as well as its source, so
-`harness/status.yaml` tracks its own phase state.
+## How to use it
 
-## Two ideas it's built on
+Type **`/harness`** (Claude Code, opencode) — or point any agent at
+[`AGENTS.md`](AGENTS.md). Each tick asks `bash harness/gates/next.sh` what now
+and does exactly one thing:
 
-**Gates are pure and executable.** Every criterion listed under a phase's
-`checks:` in [`harness/workflow.yaml`](harness/workflow.yaml) is enforced by the
-referenced script — nothing is declared but unchecked. Gates never mutate state;
-only `gates/advance.sh` does, and it runs the gate first, writes an audit entry,
-and refuses to move past a failure.
+| `action` | The agent… |
+|---|---|
+| `work` | does one unit of work, commits |
+| `advance` | runs `advance.sh <phase>` |
+| `await_human` | shows you what is waiting, and **stops** |
+| `done` | release passed — stops |
 
-**Approval is the user's word, not the agent's.** When you approve an artifact in
-conversation, the agent writes a plain `approved_by: user` marker into that
-artifact. There is no hash and no registry — deliberately. The agent *can*
-physically write that marker at any time, which is exactly why the rule is stated
-so bluntly in `AGENTS.md`: write it only after a human actually approved. See
-[`meta-0004`](harness/docs/adrs/meta-0004-trusted-approval-markers.md) for why the
-earlier hash-based scheme was removed.
+A phase runs: interview → draft → render → **you approve** → marker → gate →
+advance. `/loop /harness` repeats ticks until something waits for you.
 
-**You decide, the agent builds.** Auto mode hands the agent the routine part.
-In its default mode, `build`, the agent carries the work and the transitions
-inside an iteration (`design → implement → verify`) and approves nothing:
-stories, ADRs, the plan and every iteration design stay yours, enforced by the
-gates. A question that comes up mid-flight becomes a decision file
-(`docs/decisions/DEC-NNN-*.md`) that stops the machine until you answer.
-`gates/next.sh` tells a loop what to do next and whose move it is. Mode `full`
-— which has to be named — also lets the agent approve what it drafted, marked
-`approved_by: autopilot`, never `user`. Either way auto mode is bounded by
-wall-clock expiry and an iteration budget, and `release` always waits for a
-person. See
-[`meta-0008`](harness/docs/adrs/meta-0008-decision-gated-autonomy.md).
+**Auto mode** — only if you ask: `bash harness/gates/autopilot.sh on --expires 8h`
 
-**Evidence, not checkboxes.** `implement`, `verify` and `release` run the
-project's own test, lint and acceptance commands every time they are asked;
-what the agent ticks off is its account, not the proof. While autopilot runs,
-a change to anything you decided trips a wire and stops it, unless you
-answered a decision that covers it — and `gates/report.sh` tells you what
-happened while you were away. See
-[`meta-0009`](harness/docs/adrs/meta-0009-evidence-not-checkboxes.md).
+| | `build` (default) | `full` (must be named) |
+|---|---|---|
+| agent advances alone | design, implement, verify | every phase but release |
+| agent may approve | nothing | its own drafts, as `approved_by: autopilot` |
+| release | you | you |
 
-**What the pilot showed.** A finding at `release` can become an iteration of its own: `advance.sh reopen` goes back, but only for you and only after you answered a decision that changes `plan.md`. Every design names its interfaces and which non-functional requirements it touches, so a fresh subagent per story builds to the same boundary. And autopilot's expiry never strands an iteration it already started. See [`meta-0010`](harness/docs/adrs/meta-0010-pilot-findings.md).
+While it runs, a change to anything you decided (PRD, plan, stories, ADRs,
+`project.yaml`) trips a wire and stops it. `bash harness/gates/report.sh` shows
+what happened while you were away.
 
-## Install into your project
+## Install
 
 ```bash
-bash harness/init.sh <TARGET_DIR> --name <PROJECT_NAME>
+bash harness/init.sh <TARGET_DIR> --name <PROJECT_NAME>   # scaffold into a project
+bash tools/install-skills.sh                               # skills → ~/.claude/skills
 ```
 
-Besides `harness/`, the installer adds the `/harness` command for Claude Code
-and opencode, `AGENTS.md`, a `.shellcheckrc`, and LF rules in `.gitattributes`.
-Unless you pass `--no-git` it also adds one `.gitignore` entry, initialises a
-repo if there is none, and makes one commit. An existing `AGENTS.md` is kept —
-the harness copy lands next to it as `AGENTS.harness.md`. Then work one phase at
-a time — via `/harness` in Claude Code or opencode, or by pointing any other
-agent at `AGENTS.md`.
+Adds `harness/`, the `/harness` command, `AGENTS.md` (an existing one is kept;
+the copy lands as `AGENTS.harness.md`), and one git commit unless `--no-git`.
 
-Install the skills for your own account with:
+Requires `bash` ≥ 4, `jq`, mikefarah `yq` v4, plus whatever your
+`project.yaml` commands call (Python with `pyproject.toml` falls back to
+`pytest`, `ruff`, `behave`).
 
 ```bash
-bash tools/install-skills.sh           # copy this repo's skills to ~/.claude/skills
-bash tools/install-skills.sh --check   # is the installed copy still this repo's?
-bash tools/package-skill.sh            # zips for uploading as account skills
+winget install MikeFarah.yq jqlang.jq   # Windows — run gates in Git Bash
+brew install bash yq jq                 # macOS
 ```
 
-This repo is the only place the skills are edited. The installed copy and the
-account skills are built from it, each stamped with the workflow version and
-commit it came from.
+## This repo
 
-## Requirements
+| Path | |
+|---|---|
+| [`harness/`](harness/) | the harness — start at [`harness/README.md`](harness/README.md) |
+| [`skills/harness-init/`](skills/harness-init/) | skill that scaffolds it (bundled copy of `harness/`) |
+| [`skills/mermaid-render/`](skills/mermaid-render/) | skill that makes Mermaid diagrams reviewable |
+| [`AGENTS.md`](AGENTS.md) | portable agent contract |
+| [`tools/`](tools/) | install, package, sync and repo checks |
 
-- `bash` **>= 4**, `jq`, and mikefarah `yq` **v4** (the gate library rejects python-yq)
-- whatever the commands in `harness/project.yaml` call: the `implement` gate
-  runs your stack's test, lint and acceptance commands from there. A Python
-  project with a `pyproject.toml` and no configured commands falls back to
-  `pytest`, `ruff` and `behave`.
+The repo is its own harness installation (`harness/status.yaml`).
 
-```bash
-winget install MikeFarah.yq jqlang.jq   # Windows — run the gates in Git Bash
-brew install bash yq jq                 # macOS — its /bin/bash is 3.2
-pip install behave pytest ruff          # only for the Python fallback
-```
-
-## Development
-
-```bash
-bash harness/tests/gates/test_gates.sh
-```
-
-The harness self-tests its own gates. CI additionally runs shellcheck, scaffolds
-into a clean directory to confirm a fresh install starts with zero approvals,
-checks that the skill's bundled copy has not drifted from `harness/`, and runs
-`tools/check-repo.sh`: no removed concept is still being taught, the installed
-`/harness` commands match their sources in `harness/glue/`, and the workflow
-version that is live has an approved ADR behind it.
-
-Work on a branch and merge through a pull request with CI green. Run parallel
-agent sessions in separate worktrees, not in one checkout — two sessions
-sharing a working tree is how unrelated changes ended up in each other's
-commits here.
-
-Changes to the harness itself go through the meta-loop documented in
-[`harness/docs/WORKFLOW_CHANGES.md`](harness/docs/WORKFLOW_CHANGES.md): a
-`meta-NNNN` ADR, approval, and a version bump in `workflow.yaml`.
+**Developing:** `bash harness/tests/gates/test_gates.sh` self-tests the gates;
+CI adds shellcheck, a clean scaffold, drift and `tools/check-repo.sh`. Work on a
+branch, one worktree per parallel session. Changes to the harness itself need a
+`meta-NNNN` ADR, approval and a version bump — see
+[`WORKFLOW_CHANGES.md`](harness/docs/WORKFLOW_CHANGES.md).
 
 ## License
 
-Public domain — [The Unlicense](LICENSE). Do whatever you want with it.
+Public domain — [The Unlicense](LICENSE).
