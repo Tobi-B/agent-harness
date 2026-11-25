@@ -50,7 +50,7 @@ check_pair() {
   cmp -s "$src" "$installed" || bad "$installed differs from $src — copy the glue file over it"
 }
 check_pair harness/glue/claude-command-harness.md   .claude/commands/harness.md
-check_pair harness/glue/opencode-command-harness.md .opencode/command/harness.md
+check_pair harness/glue/opencode-command-harness.md .opencode/commands/harness.md
 check_pair harness/glue/shellcheckrc                .shellcheckrc
 
 # --- 3. version bookkeeping ----------------------------------------------------

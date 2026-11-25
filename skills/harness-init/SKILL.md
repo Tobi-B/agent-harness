@@ -32,16 +32,22 @@ you materially changed after approval.
 
 1. **Determine the target directory.** Ask if unclear. Installing into an
    existing codebase is fine — nothing outside `harness/`, `.claude/commands/`,
-   `.opencode/command/`, and `AGENTS.md` is touched, and an existing `AGENTS.md`
+   `.opencode/commands/`, and `AGENTS.md` is touched, and an existing `AGENTS.md`
    is preserved (the harness copy lands as `AGENTS.harness.md` to merge).
 
-2. **Run the installer** from this skill's bundled copy:
+2. **Run the installer** from this skill's bundled copy. It sits in this
+   skill's directory — the base directory you were given when the skill
+   loaded: `~/.claude/skills/harness-init` for Claude Code,
+   `~/.config/opencode/skills/harness-init` for OpenCode.
 
    ```bash
-   bash ~/.claude/skills/harness-init/assets/harness/init.sh <TARGET_DIR> --name <PROJECT_NAME>
+   bash <this skill's directory>/assets/harness/init.sh <TARGET_DIR> --name <PROJECT_NAME> --target <claude|opencode|all>
    ```
 
-   Flags: `--no-git` to skip git init/commit, `--force` to replace an existing
+   `--target` picks which agent gets the `/harness` command: `claude`
+   (`.claude/commands/`), `opencode` (`.opencode/commands/`) or `all` (the
+   default). Pass the agent you are, unless the user wants both. Other flags:
+   `--no-git` to skip git init/commit, `--force` to replace an existing
    `harness/`. The script refuses to overwrite an existing harness otherwise.
 
 3. **Check the tools.** Gates need `bash`, `jq`, and mikefarah `yq` v4:

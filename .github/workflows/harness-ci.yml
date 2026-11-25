@@ -53,6 +53,19 @@ jobs:
 
           bash "$S/tests/gates/test_gates.sh"
 
+      - name: Scaffold per agent target
+        run: |
+          bash harness/init.sh /tmp/t-claude --no-git --target claude
+          test -f /tmp/t-claude/.claude/commands/harness.md
+          test ! -e /tmp/t-claude/.opencode
+          bash harness/init.sh /tmp/t-opencode --no-git --target opencode
+          test -f /tmp/t-opencode/.opencode/commands/harness.md
+          test ! -e /tmp/t-opencode/.claude
+          if bash harness/init.sh /tmp/t-bad --no-git --target vim 2>/dev/null; then
+            echo "::error::init.sh accepted an unknown --target"
+            exit 1
+          fi
+
       - name: Skill assets in sync with repo
         run: bash tools/sync-skill.sh --check
 
@@ -71,6 +84,10 @@ jobs:
           export CLAUDE_SKILLS_DIR=/tmp/skills
           bash tools/install-skills.sh
           bash tools/install-skills.sh --check
+          export OPENCODE_SKILLS_DIR=/tmp/oc-skills
+          bash tools/install-skills.sh --target opencode
+          test -f /tmp/oc-skills/mermaid-render/render.sh
+          bash tools/install-skills.sh --check --target all
           # A stale installed copy must be reported, not waved through.
           echo "drift" >> /tmp/skills/harness-init/SKILL.md
           if bash tools/install-skills.sh --check; then
