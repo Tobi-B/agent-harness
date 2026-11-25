@@ -73,7 +73,9 @@ what happened while you were away.
 
 ```bash
 bash harness/init.sh <TARGET_DIR> --name <PROJECT_NAME>   # scaffold into a project
-bash tools/install-skills.sh                               # skills → ~/.claude/skills
+bash tools/install-skills.sh                               # skills → ~/.claude/skills (OpenCode reads it too)
+bash tools/install-skills.sh --target opencode             # skills → ~/.config/opencode/skills
+bash tools/install-skills.sh --target all                  # both
 ```
 
 Adds `harness/`, the `/harness` command, `AGENTS.md` (an existing one is kept;
