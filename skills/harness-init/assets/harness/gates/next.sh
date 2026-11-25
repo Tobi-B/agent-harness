@@ -37,6 +37,9 @@ say iteration "${iter:--}"
 
 if reason=$(autopilot_on_and_unexpired); then
   say autopilot "on (mode: $(autopilot_mode))"
+elif [ "$(autopilot_field enabled)" = "true" ] && [ -n "$iter" ]      && autopilot_iteration_claimed "$iter"; then
+  # meta-0010: the expiry stops new iterations, not one already claimed.
+  say autopilot "on (mode: $(autopilot_mode)) — $reason; $iter was claimed and still finishes"
 else
   say autopilot "off ($reason)"
 fi
@@ -89,7 +92,7 @@ fi
 
 # The tripwire (meta-0009): while autopilot is on, something the user decided
 # changed and no answered decision covers it. Same rank as an open decision.
-if autopilot_on_and_unexpired >/dev/null 2>&1; then
+if autopilot_on_and_unexpired >/dev/null 2>&1    || { [ "$(autopilot_field enabled)" = "true" ] && [ -n "$iter" ]         && autopilot_iteration_claimed "$iter"; }; then
   changed=$(tripwire_changes)
   if [ -n "$changed" ]; then
     say action "await_human"

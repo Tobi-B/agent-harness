@@ -1,4 +1,4 @@
-version: 9
+version: 10
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
@@ -9,7 +9,9 @@ name: lean-harness
 # A gate exits 1 when work is needed and 3 when only the human's word is
 # missing; gates/next.sh turns that into the one action a loop takes next.
 # implement, verify and release run the project commands themselves — evidence,
-# not checkboxes (meta-0009).
+# not checkboxes (meta-0009). A design names its interfaces and NFR impact,
+# the expiry never strands a claimed iteration, and `advance.sh reopen` is the
+# decision-gated way back from release (meta-0010).
 #
 # Shape:
 #   discover → architect → model → plan → ⟳(design → implement → verify) → release

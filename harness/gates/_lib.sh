@@ -377,6 +377,27 @@ open_decisions() {
   done
 }
 
+# Answered decisions that reference $1 (a file name such as plan.md) and have
+# not been spent on a reopen yet, as "DEC-NNN<TAB>path" lines (meta-0010).
+reopen_decisions() {
+  local name="$1" f id
+  [ -d "$DECISIONS_DIR" ] || return 0
+  for f in "$DECISIONS_DIR"/DEC-*.md; do
+    [ -e "$f" ] || continue
+    approval_is_valid "$(approved_by_of "$f")" || continue
+    frontmatter_yaml "$f" | yq -e ".references // [] | any_c(. == \"$name\")" >/dev/null 2>&1 || continue
+    id=$(frontmatter_yaml "$f" | yq '.id // ""')
+    if [ -z "$id" ] || [ "$id" = "null" ]; then
+      continue
+    fi
+    if [ "$(yq ".reopens // [] | any_c(. == \"$id\")" "$STATUS_FILE")" = "true" ]; then
+      continue
+    fi
+    printf '%s\t%s\n' "$id" "$(rel_to_root "$f")"
+  done
+  return 0
+}
+
 # --- autopilot ---------------------------------------------------------------
 #
 # Auto mode has two named modes, fixed here in code (meta-0008):
@@ -469,11 +490,22 @@ autopilot_enabled_and_valid() {
 #
 # The budget counts ITERATIONS: once an iteration is claimed, autopilot
 # finishes it (design → implement → verify) even when that claim used the last
-# unit of budget. Otherwise --max-iterations N would strand iteration N after
-# its design phase.
+# unit of budget, and even after the expiry (meta-0010). Otherwise
+# --max-iterations N would strand iteration N after its design phase.
 autopilot_block_reason() {
-  local phase="$1" reason open changed iter
-  if ! reason=$(autopilot_on_and_unexpired); then
+  local phase="$1" reason open changed iter claimed=0
+  # An iteration autopilot already claimed finishes even after the expiry
+  # (meta-0010): the expiry stops NEW iterations, it never strands a half-done
+  # one. Everything else — off, scope, decisions, tripwire — still applies.
+  if [ "$(phase_scope "$phase")" = "iteration" ]; then
+    iter=$(current_iteration)
+    if [ -n "$iter" ] && autopilot_iteration_claimed "$iter"; then
+      claimed=1
+    fi
+  fi
+  if [ "$claimed" -eq 1 ] && [ "$(autopilot_field enabled)" = "true" ]; then
+    :
+  elif ! reason=$(autopilot_on_and_unexpired); then
     echo "$reason"
     return 1
   fi
@@ -495,11 +527,8 @@ autopilot_block_reason() {
     echo "decided artifacts changed since autopilot was switched on, and no answered decision references them: ${changed//$'\n'/, } — open a decision, or the user re-enables autopilot to accept the change"
     return 1
   fi
-  if [ "$(phase_scope "$phase")" = "iteration" ]; then
-    iter=$(current_iteration)
-    if [ -n "$iter" ] && autopilot_iteration_claimed "$iter"; then
-      return 0
-    fi
+  if [ "$claimed" -eq 1 ]; then
+    return 0
   fi
   if ! reason=$(autopilot_enabled_and_valid); then
     echo "$reason"

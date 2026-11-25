@@ -86,6 +86,12 @@ for yourself whether auto mode still covers you — ask `next.sh`. When it exits
 3, stop and say what is waiting; do not reach for `--yes`. `release` always
 waits for the user, so even a fully auto run ends in front of a person.
 
+The expiry stops new iterations, not one autopilot already claimed: that
+iteration still finishes. A finding at `release` that needs an iteration of
+its own is a decision that changes `plan.md`; once the user answered it and
+approved the new plan, they (never autopilot) can run
+`bash harness/gates/advance.sh reopen` to go back to `design`.
+
 ## Decisions — how you ask instead of guessing
 
 Some questions come up mid-flight and are not yours to answer. Do not decide
@@ -151,6 +157,11 @@ decisions, iteration notes, commits, and what `next.sh` says now.
    (the rendered design, the decision file, the transition), then stop. A loop
    ends here until they answer.
 6. **`action: done`** (exit 4) — the release has passed. Stop.
+
+A design also carries `## Interfaces` (names and signatures that cross a
+module boundary) and `## NFR impact` (which PRD NFRs it touches and how they are
+measured here); write `none` if there is nothing. The `design` gate fails
+while either is missing or empty.
 
 In the iteration file, everything above `## Verification` is the approved
 design; `## Verification` and `## Notes` are yours to fill.
