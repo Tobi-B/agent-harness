@@ -177,9 +177,12 @@ harness — see `tools/sync-skill.sh` in the source repo.
 ## Rendering diagrams
 
 ```bash
-bash ~/.claude/skills/mermaid-render/render.sh --shared-lib \
+bash deps/render.sh --shared-lib \
   -o docs/iterations/ITER-01.html --title "ITER-01 Design" docs/iterations/ITER-01.md
 ```
+
+The renderer travels with the project (a copy of the `mermaid-render` skill's
+script), so every agent runs the same command.
 
 The `design` gate compares file timestamps: the rendered page must not be older
 than its markdown source, so re-render after editing.
@@ -204,13 +207,20 @@ Changes to `workflow.yaml`, `gates/`, `dor_dod.yaml`, or templates go through
 
 ## Tools required
 
-- `bash` **>= 4**, `jq`, mikefarah `yq` **v4** (the gate library rejects python-yq)
-- whatever your `project.yaml` commands call — for a Python project without
-  configured commands: `pytest`, `ruff`, `behave`
+- `bash` **>= 4** and `git`, from the system (macOS: `brew install bash` — its
+  /bin/bash is 3.2; Windows: run the gates in Git Bash)
+- mikefarah `yq` **v4**, `jq` and the Mermaid library — **in the project**:
 
-Install: `winget install MikeFarah.yq jqlang.jq` (Windows, run gates in Git
-Bash), `brew install bash yq jq` (macOS — its /bin/bash is 3.2). Python tools via
-`pip install behave pytest ruff`.
+  ```bash
+  bash deps/setup.sh          # fetch what deps/deps.lock pins (about 20 MB)
+  bash deps/setup.sh --check  # verify without downloading
+  ```
+
+  Each file is checked against the SHA-256 in `deps/deps.lock` and lands in
+  `deps/bin/` or `deps/vendor/` (git-ignored). The gates use only those; a
+  system-wide `yq` or `jq` does not count (meta-0011).
+- whatever your `project.yaml` commands call — for a Python project without
+  configured commands: `pytest`, `ruff`, `behave` (best in a project `.venv`)
 
 **Windows:** `init.sh` writes a `.gitattributes` that pins LF for `harness/**`
 and `*.feature`. Without it, git's default `core.autocrlf=true` checks the gate

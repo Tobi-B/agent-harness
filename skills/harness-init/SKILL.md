@@ -50,16 +50,20 @@ you materially changed after approval.
    `--no-git` to skip git init/commit, `--force` to replace an existing
    `harness/`. The script refuses to overwrite an existing harness otherwise.
 
-3. **Check the tools.** Gates need `bash`, `jq`, and mikefarah `yq` v4:
+3. **Fetch the tools.** The gates use only the pinned mikefarah `yq` v4,
+   `jq` and Mermaid library inside the project — nothing system-wide, and a
+   system-wide copy does not count. Fetching them downloads about 20 MB from
+   GitHub and jsDelivr, so ask the user first, then:
 
    ```bash
-   winget install MikeFarah.yq jqlang.jq    # Windows
-   brew install yq jq                        # macOS
+   bash <TARGET_DIR>/harness/deps/setup.sh
    ```
 
-   macOS also needs `brew install bash` — its `/bin/bash` is 3.2 and the gates
-   need 4+. On Windows, run the gates in Git Bash; the installer writes a
-   `.gitattributes` that keeps them LF (CRLF checkouts break every gate).
+   Every file is checked against the SHA-256 pinned in `harness/deps/deps.lock`.
+   From the system the gates need only `bash` ≥ 4 and `git`: macOS needs
+   `brew install bash` (its `/bin/bash` is 3.2). On Windows, run the gates in
+   Git Bash; the installer writes a `.gitattributes` that keeps them LF (CRLF
+   checkouts break every gate).
 
    Verify with `bash <TARGET>/harness/tests/gates/test_gates.sh` — the harness
    self-tests its own gates. If they pass, the install is sound.
@@ -135,8 +139,9 @@ acceptance runner at `$HARNESS_DUE_FEATURES`. The rules are in the project's
 - Never fabricate approvals: `approved_by: user` goes into a file only after
   the user explicitly approved that artifact in conversation. Nothing verifies
   this mechanically — which is exactly why it must hold.
-- In `design`, render the Mermaid with the `mermaid-render` skill and show the
-  user the page before asking for approval. A design gate that was approved
+- In `design`, render the Mermaid with `bash harness/deps/render.sh` (the
+  project's copy of the `mermaid-render` skill's script) and show the user the
+  page before asking for approval. A design gate that was approved
   without anyone looking at the diagram defeats the purpose.
 - If the user asks how the loop works, read `harness/workflow.yaml` and
   summarize it rather than inventing a different process.

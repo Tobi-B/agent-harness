@@ -56,8 +56,15 @@ html_escape() {
 }
 
 # Fetch the vendored library on first use, so the skill works offline later.
+# Inside a project this script is harness/deps/render.sh, next to setup.sh:
+# there the library is one of the pinned, checked tools (meta-0011), and an
+# unpinned copy from the CDN is never fetched in its place.
 ensure_lib() {
   [ -s "$VENDOR_LIB" ] && return 0
+  if [ -f "$SCRIPT_DIR/setup.sh" ] && [ -f "$SCRIPT_DIR/deps.lock" ]; then
+    echo "FAIL: the pinned Mermaid library is missing — run: bash $SCRIPT_DIR/setup.sh" >&2
+    exit 2
+  fi
   mkdir -p "$(dirname "$VENDOR_LIB")"
   echo "fetching mermaid (one-time, ~3.5 MB) …" >&2
   if curl -fsSL "$CDN_URL" -o "$VENDOR_LIB.tmp" 2>/dev/null && [ -s "$VENDOR_LIB.tmp" ]; then

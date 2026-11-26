@@ -10,17 +10,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install yq (mikefarah v4, pinned)
+      # The same pinned, checked tools every project uses (meta-0011) — nothing
+      # system-wide. The real download and checksum path runs on every push.
+      - name: Fetch the pinned tools into harness/deps
         run: |
-          sudo wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-          yq --version
+          bash harness/deps/setup.sh
+          bash harness/deps/setup.sh --check
+          echo "$PWD/harness/deps/bin" >> "$GITHUB_PATH"
 
       - name: shellcheck
         run: |
           shellcheck -x harness/gates/*.sh harness/init.sh harness/tests/gates/*.sh \
-                        tools/*.sh skills/mermaid-render/render.sh
+                        harness/deps/*.sh tools/*.sh skills/mermaid-render/render.sh
 
       - name: Gate self-tests
         run: bash harness/tests/gates/test_gates.sh
@@ -29,6 +30,16 @@ jobs:
         run: |
           bash harness/init.sh /tmp/scaffold-check --name ci-demo --no-git
           S=/tmp/scaffold-check/harness
+
+          # The tools travel as script + pins, never as fetched binaries.
+          test -f "$S/deps/setup.sh" && test -f "$S/deps/deps.lock" && test -f "$S/deps/render.sh"
+          test ! -e "$S/deps/bin" && test ! -e "$S/deps/vendor"
+          # Strictly local: with deps/bin empty the gates refuse, system yq or not.
+          if bash "$S/gates/discover.sh" 2>/dev/null; then
+            echo "::error::gates ran without harness/deps/bin"; exit 1
+          fi
+          cp -r harness/deps/bin harness/deps/vendor "$S/deps/"
+          bash "$S/deps/setup.sh" --check
 
           # A fresh scaffold must start clean. State lives in status.yaml:
           test "$(yq '.current_phase' "$S/status.yaml")" = "discover"
@@ -72,6 +83,8 @@ jobs:
       - name: Scaffold from the skill's bundled copy
         run: |
           bash skills/harness-init/assets/harness/init.sh /tmp/skill-check --name skill-demo --no-git
+          cp -r harness/deps/bin harness/deps/vendor /tmp/skill-check/harness/deps/
+          bash /tmp/skill-check/harness/deps/setup.sh --check
           bash /tmp/skill-check/harness/tests/gates/test_gates.sh
 
       # No removed concept still taught, /harness commands match harness/glue/,

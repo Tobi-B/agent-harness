@@ -1,4 +1,4 @@
-version: 10
+version: 11
 name: lean-harness
 
 # Contract: every criterion listed under a phase's `gate:` block is enforced
@@ -11,7 +11,9 @@ name: lean-harness
 # implement, verify and release run the project commands themselves — evidence,
 # not checkboxes (meta-0009). A design names its interfaces and NFR impact,
 # the expiry never strands a claimed iteration, and `advance.sh reopen` is the
-# decision-gated way back from release (meta-0010).
+# decision-gated way back from release (meta-0010). yq, jq and the renderer
+# live in deps/, pinned and fetched by deps/setup.sh; a system-wide copy does
+# not count (meta-0011).
 #
 # Shape:
 #   discover → architect → model → plan → ⟳(design → implement → verify) → release
@@ -129,7 +131,7 @@ phases:
     agent_actions:
       - propose_patterns_and_approach_for_this_iteration
       - draw_mermaid_uml_for_the_change
-      - render_design_to_html_via_mermaid_render_skill
+      - render_design_to_html_via_deps_render_sh
       - show_rendered_page_to_user
       - request_user_approval_on_iteration_design
     produces:
@@ -226,7 +228,8 @@ agent:
   advance_tool: gates/advance.sh    # the user, or the agent with --yes on explicit instruction, or autopilot for the phases its mode carries; advances the CURRENT phase only
   autopilot_tool: gates/autopilot.sh  # agent runs it ONLY on the user's explicit chat instruction
   report_tool: gates/report.sh      # pure; what happened since autopilot was switched on
-  render_tool: ~/.claude/skills/mermaid-render/render.sh
+  render_tool: deps/render.sh       # the same for every agent; its Mermaid library is pinned in deps/deps.lock
+  setup_tool: deps/setup.sh         # fetches the pinned yq, jq and Mermaid into deps/ — it downloads, so it is the user's call
   user_in_the_loop_required_for:    # in auto mode `build` too; mode `full` hands all but the last two to the agent
     - adr_decisions
     - iteration_designs

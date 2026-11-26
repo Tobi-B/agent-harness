@@ -1,8 +1,8 @@
 ---
 id: meta-0011
-status: proposed
+status: accepted
 date: 2026-11-26
-approved_by:
+approved_by: user (2026-11-26, in chat — strictly local, no system fallback)
 references:
   - meta-0006-hardening-and-stack-neutral-implement.md
   - meta-0010-pilot-findings.md
@@ -11,9 +11,8 @@ references:
 # meta-0011 Tools travel with the project: pinned yq, jq and renderer inside `harness/deps/`
 
 Meta ADR (workflow change, exempt from the project ADR hardcap — see
-`WORKFLOW_CHANGES.md`). **Proposed** — nothing in `workflow.yaml` or `gates/`
-changes until the user approves it (set `status: accepted` and
-`approved_by: user`).
+`WORKFLOW_CHANGES.md`). **Accepted** — approved by the user before any change
+to `workflow.yaml` or `gates/` was made, with the strict variant below.
 
 ## Context and Problem Statement
 
@@ -71,14 +70,15 @@ changes until the user approves it (set `status: accepted` and
 
 ## Decision Outcome
 
-Proposed: **option 3** for the tools and **B** for the renderer.
+Chosen: **option 3** for the tools and **B** for the renderer, **strictly
+local**.
 
-Open for the owner: **does the system copy still count when `deps/bin` is
-empty?** Proposed **yes** — the gates prefer `harness/deps/bin` and fall back
-to a system yq/jq (still checked for mikefarah v4), so CI and existing
-machines keep working and the missing-tool message names `setup.sh` first.
-The strict alternative refuses system tools entirely; it guarantees the pin
-but breaks every existing setup until `setup.sh` has run.
+The draft proposed a fallback to a system yq/jq while `deps/bin` is empty. The
+owner chose the strict variant: **a system-wide yq or jq does not count.** The
+gates use the copies in `harness/deps/bin` or stop with exit 2 and the
+`setup.sh` command. That guarantees the pinned versions everywhere; the price
+is that every existing machine and CI have to run `setup.sh` once before the
+gates run again.
 
 ### What changes
 
@@ -88,7 +88,8 @@ but breaks every existing setup until `setup.sh` has run.
   `harness/deps/bin/` (`yq`, `jq`) and `harness/deps/vendor/`
   (`mermaid.min.js`). A file whose checksum already matches is not fetched
   again; a mismatch leaves nothing behind. `--check` is pure: exit 1 when
-  anything is missing or differs. `HARNESS_DEPS_MIRROR` replaces the download
+  anything is missing or differs. `--hash FILE` prints a checksum, for
+  bumping a version. `HARNESS_DEPS_MIRROR` replaces the download
   host (proxies, offline mirrors, the self-tests).
 - **`harness/deps/deps.lock`** — plain text, one line per tool and platform:
   name, platform, URL, SHA-256. Plain text because yq is one of the things it
@@ -98,11 +99,14 @@ but breaks every existing setup until `setup.sh` has run.
   jsDelivr's copy).
 - **`harness/deps/.gitignore`** — `bin/`, `vendor/`; it travels with the
   directory.
-- **`_lib.sh`** — puts `harness/deps/bin` (found relative to the gate
-  scripts) first on `PATH`; the system probes stay as the fallback; the
-  missing-tool message names `bash harness/deps/setup.sh` first.
+- **`_lib.sh`** — requires `yq` and `jq` in `harness/deps/bin` (found
+  relative to the gate scripts, not `HARNESS_ROOT`) and puts that directory
+  first on `PATH`. A missing one is exit 2 with the `setup.sh` command. The six
+  install-directory probes go: they only existed to find system copies.
 - **Renderer** — `harness/deps/render.sh` is the skill's `render.sh`;
-  `tools/check-repo.sh` keeps the two identical. `AGENTS.md`, `design.sh`'s
+  `tools/check-repo.sh` keeps the two identical. Next to a `setup.sh` (that
+  is, inside a project) it never fetches an unpinned Mermaid library: a
+  missing one is an error naming `setup.sh`. `AGENTS.md`, `design.sh`'s
   hint, `workflow.yaml` (`render_tool: deps/render.sh`) and
   `harness/README.md` say `bash harness/deps/render.sh`.
 - **`init.sh`** copies `harness/deps/` without `bin/` and `vendor/` and names
@@ -127,7 +131,8 @@ Extend `tests/gates/test_gates.sh`, one check per claim, without network:
 - a second run fetches nothing (the mirror is gone and it still passes);
 - an installed binary changed afterwards fails `--check`;
 - an unsupported platform fails with a message naming it;
-- the gates prefer `harness/deps/bin` over a system `yq`;
+- the gates use `harness/deps/bin` ahead of a `yq` earlier on `PATH`, and
+  refuse to run when it is empty, a system `yq` notwithstanding;
 - a scaffold carries `deps/` without `bin/` and `vendor/`.
 
 CI additionally runs `setup.sh` against GitHub and jsDelivr on Linux, then the
@@ -152,5 +157,5 @@ full suite with nothing but those tools.
   checksums for five platforms.
 - Bad: the first `setup.sh` needs network, about 15 MB per machine.
 - Bad: two copies of `render.sh` (kept identical by `check-repo.sh`).
-- Neutral: with the fallback, a machine that skips `setup.sh` runs on its
-  system tools — the pin is only as strong as that habit.
+- Bad: strict — every existing machine and CI run `setup.sh` once before
+  the gates work again; there is no system fallback to lean on.

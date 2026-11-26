@@ -84,6 +84,18 @@ if [ -d "$SRC_ROOT/glue" ]; then
   cp -r "$SRC_ROOT/glue" "$target/harness/"
 fi
 
+# --- tools the project carries (meta-0011) ------------------------------------
+# The script, the pins and the renderer travel; what setup.sh fetched (bin/,
+# vendor/) does not — each machine fetches and checks its own. Nothing is
+# downloaded here.
+mkdir -p "$target/harness/deps"
+for f in setup.sh deps.lock render.sh; do
+  [ -f "$SRC_ROOT/deps/$f" ] || { echo "FAIL: $SRC_ROOT/deps/$f is missing — the gates cannot run without it" >&2; exit 1; }
+  cp "$SRC_ROOT/deps/$f" "$target/harness/deps/"
+done
+# Optional: some packagings strip dotfiles; the root .gitignore below covers it.
+[ ! -f "$SRC_ROOT/deps/.gitignore" ] || cp "$SRC_ROOT/deps/.gitignore" "$target/harness/deps/"
+
 # --- gate self-tests travel with the harness ---------------------------------
 mkdir -p "$target/harness/tests/gates" "$target/harness/tests/features"
 cp "$SRC_ROOT/tests/gates/test_gates.sh" "$target/harness/tests/gates/"
@@ -149,7 +161,7 @@ sed -i "s|^# Agent Instructions (portable)|# Agent Instructions — ${name}|" \
 # core.autocrlf=true, a CRLF checkout breaks every script ("pipefail\r: invalid
 # option") and hides every approval marker. Pin LF for everything the gates read.
 # Also normalise what we just copied, in case the skill itself arrived as CRLF.
-find "$target/harness" -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.md' -o -name '*.template*' \) \
+find "$target/harness" -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.md' -o -name '*.template*' -o -name '*.lock' \) \
   -exec sed -i 's/\r$//' {} + 2>/dev/null || true
 
 if ! grep -qs 'lean harness: keep LF' "$target/.gitattributes"; then
@@ -179,6 +191,16 @@ if [ "$do_git" -eq 1 ]; then
 .claude/settings.local.json
 EOF
   fi
+  # harness/deps/.gitignore says the same, but some skill packagings strip
+  # dotfiles — fetched binaries must never land in a commit.
+  if ! grep -qsxF 'harness/deps/bin/' "$target/.gitignore"; then
+    cat >> "$target/.gitignore" <<'EOF'
+
+# lean harness: tools fetched by harness/deps/setup.sh (pinned, never committed)
+harness/deps/bin/
+harness/deps/vendor/
+EOF
+  fi
   git -C "$target" add -A
   if git -C "$target" diff --cached --quiet; then
     echo "INFO: nothing to commit"
@@ -195,7 +217,9 @@ cat <<EOF
 
 harness installed in $target (agent glue: $agents)
 
-  next: open the project and run /harness  (or: bash harness/gates/discover.sh)
+  first: bash harness/deps/setup.sh  — fetches the pinned yq, jq and Mermaid
+         (about 20 MB) into harness/deps/; the gates use nothing else
+  next:  open the project and run /harness  (or: bash harness/gates/discover.sh)
 
   state:    harness/status.yaml       (phase: discover, nothing approved yet)
   contract: harness/workflow.yaml

@@ -13,10 +13,9 @@
 #   CLAUDE_SKILLS_DIR=... OPENCODE_SKILLS_DIR=... bash tools/install-skills.sh
 #
 # OpenCode also reads ~/.claude/skills, so the default install already works
-# there; --target opencode puts the copy in OpenCode's own directory. Note that
-# AGENTS.md and the design gate call ~/.claude/skills/mermaid-render/render.sh,
-# so with an OpenCode-only install the render step needs --target all (or the
-# default) as well.
+# there; --target opencode puts the copy in OpenCode's own directory. A
+# scaffolded project needs neither skill to run: it carries its own renderer
+# and tools in harness/deps/ (meta-0011).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

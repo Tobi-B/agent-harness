@@ -8,6 +8,17 @@ set -euo pipefail
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../gates" && pwd)"
 REAL_ROOT="$(cd "$GATES_DIR/.." && pwd)"
 
+# The gates run on the pinned tools in harness/deps/bin and nothing else
+# (meta-0011) — and so does this script, which calls yq itself.
+DEPS_BIN="$REAL_ROOT/deps/bin"
+if ! { [ -x "$DEPS_BIN/yq" ] || [ -x "$DEPS_BIN/yq.exe" ]; } \
+   || ! { [ -x "$DEPS_BIN/jq" ] || [ -x "$DEPS_BIN/jq.exe" ]; }; then
+  echo "the pinned tools are not in $DEPS_BIN — run first: bash $REAL_ROOT/deps/setup.sh" >&2
+  exit 2
+fi
+export PATH="$DEPS_BIN:$PATH"
+REAL_YQ="$(command -v yq)"
+
 FIXTURE="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE"' EXIT
 export HARNESS_ROOT="$FIXTURE"
@@ -787,16 +798,23 @@ t_msg "release is never carried, not even in mode full" "release always waits fo
   auto_advance release
 
 # One write: advance.sh used to change status.yaml in about eight separate yq
-# calls, with current_phase last. Count them through a wrapper.
+# calls, with current_phase last. Count them through a wrapper — which has to
+# sit where the gates look for yq: the deps/bin next to them (meta-0011). So
+# this runs a copy of the gates whose deps/bin holds the wrapper.
 YQ_WRAP="$(mktemp -d)"
-cat > "$YQ_WRAP/yq" <<EOF
+cp -r "$GATES_DIR" "$YQ_WRAP/gates"
+mkdir -p "$YQ_WRAP/deps/bin"
+cp "$DEPS_BIN"/jq* "$YQ_WRAP/deps/bin/"
+cat > "$YQ_WRAP/deps/bin/yq" <<EOF
 #!/usr/bin/env bash
 for a in "\$@"; do [ "\$a" = "-i" ] && echo x >> "$YQ_WRAP/writes"; done
-exec "$(command -v yq)" "\$@"
+exec "$REAL_YQ" "\$@"
 EOF
-chmod +x "$YQ_WRAP/yq"
+chmod +x "$YQ_WRAP/deps/bin/yq"
+t "the gates take yq from their own deps/bin, ahead of PATH" \
+  test "$(bash -c ". '$YQ_WRAP/gates/_lib.sh'; command -v yq")" = "$YQ_WRAP/deps/bin/yq"
 t "release advances once the human says so" \
-  env PATH="$YQ_WRAP:$PATH" bash "$GATES_DIR/advance.sh" release --yes
+  bash "$YQ_WRAP/gates/advance.sh" release --yes
 t "advance.sh writes status.yaml exactly once" \
   test "$(wc -l < "$YQ_WRAP/writes" | tr -d ' ')" = "1"
 rm -rf "$YQ_WRAP"
@@ -1133,6 +1151,96 @@ v9 autopilot.sh off >/dev/null
 
 v9 autopilot.sh off >/dev/null
 rm -rf "$V9P"
+
+# --- meta-0011: the tools travel with the project -----------------------------
+
+# Strictly local: a copy of the gates with an empty deps/bin refuses to run,
+# although this script has a perfectly good yq on PATH.
+NODEPS="$(mktemp -d)"
+cp -r "$GATES_DIR" "$NODEPS/gates"
+t_rc "with deps/bin empty the gates stop: environment broken" 2 bash "$NODEPS/gates/discover.sh"
+t_msg "…naming setup.sh — a yq elsewhere on PATH does not count" "deps/setup.sh" \
+  bash "$NODEPS/gates/discover.sh"
+rm -rf "$NODEPS"
+
+# setup.sh, offline: a stand-in for a project's harness/deps and a local mirror
+# standing in for GitHub and the CDN, with pins made for the test.
+DT="$(mktemp -d)"
+MIR="$(mktemp -d)"
+cp "$REAL_ROOT/deps/setup.sh" "$DT/"
+# A shebang, because Git Bash calls a file executable by its content or name,
+# not by chmod.
+printf '#!/bin/sh\necho fake yq\n' > "$MIR/yq_asset"
+printf '#!/bin/sh\necho fake jq\n' > "$MIR/jq_asset"
+printf '/* fake lib */\n'          > "$MIR/lib.js"
+pin() { bash "$DT/setup.sh" --hash "$1"; }
+cat > "$DT/deps.lock" <<EOF
+# pins made for the test
+yq       vT  test-os  bin/yq                 https://example.invalid/r/yq_asset  $(pin "$MIR/yq_asset")
+jq       vT  test-os  bin/jq                 https://example.invalid/r/jq_asset  $(pin "$MIR/jq_asset")
+mermaid  vT  any      vendor/mermaid.min.js  https://example.invalid/c/lib.js    $(pin "$MIR/lib.js")
+EOF
+file_url() {
+  if command -v cygpath >/dev/null 2>&1; then
+    echo "file:///$(cygpath -m "$1")"
+  else
+    echo "file://$1"
+  fi
+}
+dsetup() {
+  env HARNESS_DEPS_PLATFORM=test-os HARNESS_DEPS_MIRROR="$(file_url "$MIR")" \
+    bash "$DT/setup.sh" "$@"
+}
+
+t "setup.sh fetches every pinned file (from a mirror)" dsetup
+t "…yq and jq land in bin/, executable" test -x "$DT/bin/yq" -a -x "$DT/bin/jq"
+t "…the Mermaid library lands in vendor/" test -f "$DT/vendor/mermaid.min.js"
+t "--check passes on what was fetched" dsetup --check
+mv "$MIR" "$MIR.gone"
+t "a second run fetches nothing (the mirror is gone)" dsetup
+mv "$MIR.gone" "$MIR"
+echo tampered >> "$DT/bin/jq"
+t_msg "--check notices a binary changed afterwards" "DIFFERS: jq" dsetup --check
+t "a run puts the pinned file back" dsetup
+t "…and --check passes again" dsetup --check
+rm -f "$DT/bin/yq"
+echo "not the pinned file" > "$MIR/yq_asset"
+t_msg "a download that does not match its pin is refused" "checksum mismatch for yq" dsetup
+t "…and nothing is installed in its place" test ! -e "$DT/bin/yq"
+t "…not even a partial file" test ! -e "$DT/bin/yq.part"
+t_msg "an unpinned platform is named, not guessed" "no pinned yq for platform 'plan9-mips'" \
+  env HARNESS_DEPS_PLATFORM=plan9-mips bash "$DT/setup.sh"
+rm -rf "$DT" "$MIR"
+
+# The real pins: yq and jq for every supported platform, one checksum each.
+LOCK="$REAL_ROOT/deps/deps.lock"
+pins_cover_platforms() {
+  local p tool
+  for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+    for tool in yq jq; do
+      grep -qE "^$tool +[^ ]+ +$p " "$LOCK" || { echo "no $tool for $p" >&2; return 1; }
+    done
+  done
+}
+pins_wellformed() {
+  grep -vE '^[[:space:]]*(#|$)' "$LOCK" | awk 'NF != 6 { bad = 1 } END { exit bad }' \
+    && ! grep -vE '^[[:space:]]*(#|$)' "$LOCK" | awk '{ print $6 }' | grep -qvE '^[0-9a-f]{64}$'
+}
+t "deps.lock pins yq and jq for Linux, macOS and Windows" pins_cover_platforms
+t "…every line has six fields and a 64-hex checksum" pins_wellformed
+t "…and pins the Mermaid library for every platform" grep -qE '^mermaid +[^ ]+ +any ' "$LOCK"
+
+# Inside a project the renderer never fetches an unpinned library.
+RT="$(mktemp -d)"
+cp "$REAL_ROOT/deps/render.sh" "$REAL_ROOT/deps/setup.sh" "$REAL_ROOT/deps/deps.lock" "$RT/"
+printf 'flowchart LR\n  a --> b\n' > "$RT/x.mmd"
+t_msg "the project's renderer refuses to fetch an unpinned Mermaid" "pinned Mermaid library is missing" \
+  bash "$RT/render.sh" -o "$RT/out.html" "$RT/x.mmd"
+mkdir -p "$RT/vendor"
+printf '/* lib */\n' > "$RT/vendor/mermaid.min.js"
+t "…and renders once setup.sh has put the library there" \
+  bash "$RT/render.sh" --shared-lib -o "$RT/out.html" "$RT/x.mmd"
+rm -rf "$RT"
 
 # -----------------------------------------------------------------------------
 
