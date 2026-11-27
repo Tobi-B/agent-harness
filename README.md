@@ -73,20 +73,27 @@ what happened while you were away.
 
 ```bash
 bash harness/init.sh <TARGET_DIR> --name <PROJECT_NAME>   # scaffold into a project
-bash tools/install-skills.sh                               # skills → ~/.claude/skills
+#   --target claude|opencode|all  (default all): which agent gets the /harness command
+bash tools/install-skills.sh                               # skills → ~/.claude/skills (OpenCode reads it too)
+bash tools/install-skills.sh --target opencode             # skills → ~/.config/opencode/skills
+bash tools/install-skills.sh --target all                  # both
 ```
 
 Adds `harness/`, the `/harness` command, `AGENTS.md` (an existing one is kept;
 the copy lands as `AGENTS.harness.md`), and one git commit unless `--no-git`.
 
-Requires `bash` ≥ 4, `jq`, mikefarah `yq` v4, plus whatever your
-`project.yaml` commands call (Python with `pyproject.toml` falls back to
-`pytest`, `ruff`, `behave`).
+Requires `bash` ≥ 4 and `git`. Everything else the gates use — mikefarah
+`yq` v4, `jq`, the Mermaid library — is pinned per project and fetched into
+`harness/deps/` (git-ignored, each file checked against its SHA-256); nothing
+is installed system-wide, and a system-wide copy does not count:
 
 ```bash
-winget install MikeFarah.yq jqlang.jq   # Windows — run gates in Git Bash
-brew install bash yq jq                 # macOS
+bash harness/deps/setup.sh   # in the project, once per machine — about 20 MB
 ```
+
+Plus whatever your `project.yaml` commands call (Python with `pyproject.toml`
+falls back to `pytest`, `ruff`, `behave`). On Windows run the gates in Git
+Bash; macOS needs `brew install bash`.
 
 ## This repo
 

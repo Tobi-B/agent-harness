@@ -1,0 +1,21 @@
+# Pinned tools for harness/deps/setup.sh (meta-0011). One line per tool and
+# platform: name, version, platform, where it goes (under harness/deps/), the
+# URL, and the SHA-256 the download must have. Plain text on purpose: yq is one
+# of the things this file installs.
+#
+# To bump a version: change the URLs, take the new checksums from the release
+# (GitHub lists one per asset) or fetch the file and run
+# `bash harness/deps/setup.sh --hash FILE`, then run the gate self-tests.
+#
+# name   version  platform       dest                   url  checksum
+yq       v4.53.3  darwin-amd64   bin/yq                 https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_darwin_amd64 b4ba1ecce3c47f00803f4f964de38394326c7a32eb6540616e04fb2935a0f08d
+yq       v4.53.3  darwin-arm64   bin/yq                 https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_darwin_arm64 877de31753a4dd2401aa048937aa9a7fc4d5f6ce858cf31508c5802954297213
+yq       v4.53.3  linux-amd64    bin/yq                 https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64 fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
+yq       v4.53.3  linux-arm64    bin/yq                 https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_arm64 578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea
+yq       v4.53.3  windows-amd64  bin/yq.exe             https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_windows_amd64.exe e279bc506a452eeafcdf364f91a025455e402a8001169083caf01f4b64a544e2
+jq       1.8.2    darwin-amd64   bin/jq                 https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-amd64 e94b266e3c26690550006abe63152b782280f4e14374accdf04cbde844f00bc0
+jq       1.8.2    darwin-arm64   bin/jq                 https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-arm64 2d75340ba57a4b4b4c8708a21c2dc8e958a48aaa8bba13b27f77f6e4c0eca07e
+jq       1.8.2    linux-amd64    bin/jq                 https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64 b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f
+jq       1.8.2    linux-arm64    bin/jq                 https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-arm64 8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309
+jq       1.8.2    windows-amd64  bin/jq.exe             https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627
+mermaid  11.16.0  any            vendor/mermaid.min.js  https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js 74d7c46dabca328c2294733910a8aa1ed0c37451776e8d5295da38a2b758fb9b

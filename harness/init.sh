@@ -6,10 +6,13 @@
 # are never overwritten: if the target already has a harness/, the script stops.
 #
 # Usage:
-#   bash init.sh [TARGET_DIR] [--name NAME] [--no-git] [--force]
+#   bash init.sh [TARGET_DIR] [--name NAME] [--target AGENT] [--no-git] [--force]
 #
 #   TARGET_DIR   where to install (default: current directory)
 #   --name       project name written into the README/state (default: dir name)
+#   --target     which agent gets the /harness command: claude
+#                (.claude/commands/), opencode (.opencode/commands/) or all
+#                (default: all). AGENTS.md is written for every target.
 #   --no-git     skip git init / initial commit
 #   --force      replace an existing harness/ directory in the target
 set -euo pipefail
@@ -19,12 +22,18 @@ REPO_ROOT="$(cd "$SRC_ROOT/.." && pwd)"
 
 target="."
 name=""
+agents="all"
 do_git=1
 force=0
 
+need_value() {
+  [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --name)   name="$2"; shift 2 ;;
+    --name)   need_value "$@"; name="$2"; shift 2 ;;
+    --target) need_value "$@"; agents="$2"; shift 2 ;;
     --no-git) do_git=0; shift ;;
     --force)  force=1; shift ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -32,6 +41,15 @@ while [ $# -gt 0 ]; do
     *)        target="$1"; shift ;;
   esac
 done
+
+want_claude=0
+want_opencode=0
+case "$agents" in
+  claude)   want_claude=1 ;;
+  opencode) want_opencode=1 ;;
+  all)      want_claude=1; want_opencode=1 ;;
+  *) echo "unknown --target '$agents' (use claude, opencode or all)" >&2; exit 2 ;;
+esac
 
 mkdir -p "$target"
 target="$(cd "$target" && pwd)"
@@ -66,6 +84,18 @@ if [ -d "$SRC_ROOT/glue" ]; then
   cp -r "$SRC_ROOT/glue" "$target/harness/"
 fi
 
+# --- tools the project carries (meta-0011) ------------------------------------
+# The script, the pins and the renderer travel; what setup.sh fetched (bin/,
+# vendor/) does not — each machine fetches and checks its own. Nothing is
+# downloaded here.
+mkdir -p "$target/harness/deps"
+for f in setup.sh deps.lock render.sh; do
+  [ -f "$SRC_ROOT/deps/$f" ] || { echo "FAIL: $SRC_ROOT/deps/$f is missing — the gates cannot run without it" >&2; exit 1; }
+  cp "$SRC_ROOT/deps/$f" "$target/harness/deps/"
+done
+# Optional: some packagings strip dotfiles; the root .gitignore below covers it.
+[ ! -f "$SRC_ROOT/deps/.gitignore" ] || cp "$SRC_ROOT/deps/.gitignore" "$target/harness/deps/"
+
 # --- gate self-tests travel with the harness ---------------------------------
 mkdir -p "$target/harness/tests/gates" "$target/harness/tests/features"
 cp "$SRC_ROOT/tests/gates/test_gates.sh" "$target/harness/tests/gates/"
@@ -94,8 +124,8 @@ cp "$SRC_ROOT/status.yaml" "$target/harness/status.yaml"
 # Canonical copies live VISIBLY in glue/ — hidden dirs get stripped by some
 # skill packagings, so the hidden layout of a source repo is only a fallback.
 # A missing file degrades the install (no /harness command) but must not
-# abort it.
-mkdir -p "$target/.claude/commands" "$target/.opencode/command"
+# abort it. OpenCode reads .opencode/commands/ (plural; it still finds the
+# legacy singular command/ of older installs).
 install_glue() {
   local visible="$1" hidden="$2"
   if [ -f "$SRC_ROOT/glue/$visible" ]; then
@@ -106,9 +136,15 @@ install_glue() {
     echo "WARN: $hidden not found (no glue/$visible either) — skipped (agent glue, optional)"
   fi
 }
-install_glue claude-command-harness.md   .claude/commands/harness.md
-install_glue opencode-command-harness.md .opencode/command/harness.md
-install_glue shellcheckrc                .shellcheckrc
+if [ "$want_claude" -eq 1 ]; then
+  mkdir -p "$target/.claude/commands"
+  install_glue claude-command-harness.md .claude/commands/harness.md
+fi
+if [ "$want_opencode" -eq 1 ]; then
+  mkdir -p "$target/.opencode/commands"
+  install_glue opencode-command-harness.md .opencode/commands/harness.md
+fi
+install_glue shellcheckrc .shellcheckrc
 
 if [ -f "$target/AGENTS.md" ]; then
   echo "WARN: $target/AGENTS.md exists — wrote AGENTS.harness.md instead; merge it manually"
@@ -125,7 +161,7 @@ sed -i "s|^# Agent Instructions (portable)|# Agent Instructions — ${name}|" \
 # core.autocrlf=true, a CRLF checkout breaks every script ("pipefail\r: invalid
 # option") and hides every approval marker. Pin LF for everything the gates read.
 # Also normalise what we just copied, in case the skill itself arrived as CRLF.
-find "$target/harness" -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.md' -o -name '*.template*' \) \
+find "$target/harness" -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.md' -o -name '*.template*' -o -name '*.lock' \) \
   -exec sed -i 's/\r$//' {} + 2>/dev/null || true
 
 if ! grep -qs 'lean harness: keep LF' "$target/.gitattributes"; then
@@ -136,7 +172,7 @@ harness/** text eol=lf
 *.feature text eol=lf
 AGENTS.md text eol=lf
 .claude/commands/*.md text eol=lf
-.opencode/command/*.md text eol=lf
+.opencode/commands/*.md text eol=lf
 EOF
 fi
 
@@ -148,11 +184,21 @@ if [ "$do_git" -eq 1 ]; then
     git -C "$target" init -q -b main
     echo "INFO: initialised git repo"
   fi
-  if ! grep -qsxF '.claude/settings.local.json' "$target/.gitignore"; then
+  if [ "$want_claude" -eq 1 ] && ! grep -qsxF '.claude/settings.local.json' "$target/.gitignore"; then
     cat >> "$target/.gitignore" <<'EOF'
 
 # Claude Code local machine-specific settings
 .claude/settings.local.json
+EOF
+  fi
+  # harness/deps/.gitignore says the same, but some skill packagings strip
+  # dotfiles — fetched binaries must never land in a commit.
+  if ! grep -qsxF 'harness/deps/bin/' "$target/.gitignore"; then
+    cat >> "$target/.gitignore" <<'EOF'
+
+# lean harness: tools fetched by harness/deps/setup.sh (pinned, never committed)
+harness/deps/bin/
+harness/deps/vendor/
 EOF
   fi
   git -C "$target" add -A
@@ -169,9 +215,11 @@ fi
 
 cat <<EOF
 
-harness installed in $target
+harness installed in $target (agent glue: $agents)
 
-  next: open the project and run /harness  (or: bash harness/gates/discover.sh)
+  first: bash harness/deps/setup.sh  — fetches the pinned yq, jq and Mermaid
+         (about 20 MB) into harness/deps/; the gates use nothing else
+  next:  open the project and run /harness  (or: bash harness/gates/discover.sh)
 
   state:    harness/status.yaml       (phase: discover, nothing approved yet)
   contract: harness/workflow.yaml

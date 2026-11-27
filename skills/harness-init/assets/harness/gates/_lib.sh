@@ -36,56 +36,37 @@ PROJECT_ROOT="${HARNESS_PROJECT_ROOT:-$(cd "$HARNESS_ROOT/.." && pwd)}"
 PROJECT_FILE="$HARNESS_ROOT/project.yaml"
 GATE_NAME="${GATE_NAME:-$(basename "${BASH_SOURCE[1]:-unknown}" .sh)}"
 
-# A terminal opened before yq/jq were installed keeps the PATH it inherited at
-# start, so the tools exist but are invisible. Probe the usual install
-# locations before concluding they are missing.
-_add_to_path() {
-  local dir="$1"
-  # %LOCALAPPDATA% is a native Windows path; without conversion it lands in
-  # PATH drive-less ("\Users\...") and only resolves on the current drive.
-  case "$dir" in
-    *\\*) command -v cygpath >/dev/null 2>&1 && dir="$(cygpath -u "$dir")" ;;
-  esac
-  [ -d "$dir" ] || return 0
-  case ":$PATH:" in
-    *":$dir:"*) ;;
-    *) PATH="$PATH:$dir" ;;
-  esac
-}
-_add_to_path "${LOCALAPPDATA:-$HOME/AppData/Local}/Microsoft/WinGet/Links"
-_add_to_path "/c/ProgramData/chocolatey/bin"
-_add_to_path "$HOME/scoop/shims"
-_add_to_path "/opt/homebrew/bin"
-_add_to_path "/usr/local/bin"
-_add_to_path "$HOME/.local/bin"
-export PATH
-
-install_hint() {
-  case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) echo "winget install MikeFarah.yq jqlang.jq" ;;
-    Darwin)               echo "brew install yq jq" ;;
-    *)                    echo "see https://github.com/mikefarah/yq#install" ;;
-  esac
-}
+# The tools the harness carries itself (meta-0011): the pinned yq and jq that
+# deps/setup.sh put into harness/deps/bin. Found next to these scripts, not
+# under HARNESS_ROOT, which the self-tests point at a fixture. Strictly these:
+# a system-wide yq or jq does not count, so every machine and CI run exactly
+# the versions the gates were tested with.
+DEPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deps"
+DEPS_BIN="$DEPS_DIR/bin"
 
 require() {
   local tool="$1"
-  command -v "$tool" >/dev/null 2>&1 && return 0
+  if [ -x "$DEPS_BIN/$tool" ] || [ -x "$DEPS_BIN/$tool.exe" ]; then
+    return 0
+  fi
   {
-    echo "FAIL: required tool '$tool' not found."
-    echo "  install:  $(install_hint)"
-    echo "  already installed? a terminal opened before the install keeps its old"
-    echo "  PATH — open a new one, or add the install directory to PATH by hand."
+    echo "FAIL: required tool '$tool' is not in $DEPS_BIN."
+    echo "  fetch the pinned tools into the project (nothing is installed system-wide):"
+    echo "    bash $DEPS_DIR/setup.sh"
+    echo "  a system-wide $tool does not count (meta-0011)."
   } >&2
   exit 2
 }
 
 require yq
 require jq
+PATH="$DEPS_BIN:$PATH"
+export PATH
 
+# setup.sh checked the checksum; this catches a file dropped into bin/ by hand.
 # python-yq (kislyuk) has incompatible syntax; gates need mikefarah yq v4.
 if ! yq --version 2>/dev/null | grep -q "mikefarah"; then
-  echo "FAIL: 'yq' in PATH is not mikefarah yq v4 (https://github.com/mikefarah/yq)" >&2
+  echo "FAIL: '$DEPS_BIN/yq' is not mikefarah yq v4 — run: bash $DEPS_DIR/setup.sh" >&2
   exit 2
 fi
 

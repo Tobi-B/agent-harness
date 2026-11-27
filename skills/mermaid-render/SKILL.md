@@ -132,8 +132,16 @@ isn't older than its `.md` source; a hosted Artifact URL can't satisfy a
 filesystem check like that. Also use it for a page meant to live in the repo
 long-term, or one that must render fully offline from `file://`.
 
+No Artifact tool in this agent (OpenCode, for example)? Then this script is
+the way to render, for every purpose.
+
+`render.sh` sits in this skill's directory — the base directory you were given
+when the skill loaded: `~/.claude/skills/mermaid-render` for Claude Code,
+`~/.config/opencode/skills/mermaid-render` for OpenCode (`tools/install-skills.sh
+--target claude|opencode|all` puts it there).
+
 ```bash
-bash ~/.claude/skills/mermaid-render/render.sh -o OUT.html [--title TITLE] [--shared-lib|--cdn] [--open] FILE...
+bash <this skill's directory>/render.sh -o OUT.html [--title TITLE] [--shared-lib|--cdn] [--open] FILE...
 ```
 
 | Flag | Meaning |
@@ -153,7 +161,7 @@ share one directory (e.g. `docs/iterations/`); `--cdn` only on a network you
 control, since it renders nothing offline.
 
 ```bash
-bash ~/.claude/skills/mermaid-render/render.sh -o docs/uml/review.html --title "C4 Review" docs/uml/*.mmd
+bash <this skill's directory>/render.sh -o docs/uml/review.html --title "C4 Review" docs/uml/*.mmd
 ```
 
 After rendering, show the file with `SendUserFile` (`display: "render"`) or

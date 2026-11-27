@@ -4,7 +4,7 @@ harness/** text eol=lf
 *.feature text eol=lf
 AGENTS.md text eol=lf
 .claude/commands/*.md text eol=lf
-.opencode/command/*.md text eol=lf
+.opencode/commands/*.md text eol=lf
 
 # Source repo only: the skill assets mirror harness/ and are run from wherever
 # they get installed, and tools/ is bash too. A CRLF checkout breaks them the

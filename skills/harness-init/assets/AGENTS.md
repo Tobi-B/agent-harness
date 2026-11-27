@@ -9,7 +9,8 @@ setup. Claude Code and opencode also have a `/harness` command.
 
 1. Run `bash harness/gates/next.sh` — it prints the phase, the iteration, the
    gate's verdict, the autopilot state, ONE action, and what is waiting for
-   the user. It is pure; run it as often as you like.
+   the user. It is pure; run it as often as you like. If it says a tool is
+   missing, the tools have not been fetched on this machine yet (see "Tools").
 2. Read `harness/workflow.yaml` — phases, gates, hardcaps — and
    `harness/dor_dod.yaml` — per-phase readiness criteria.
 3. Read `harness/docs/plan.md` — the iteration list, once past `plan`.
@@ -211,8 +212,11 @@ In `model` and `design`, render the Mermaid diagrams to a page the user can
 look at:
 
 ```bash
-bash ~/.claude/skills/mermaid-render/render.sh --shared-lib -o <out>.html --title "<title>" <sources>
+bash harness/deps/render.sh --shared-lib -o <out>.html --title "<title>" <sources>
 ```
+
+The renderer travels with the project, so the command is the same for every
+agent; its Mermaid library is one of the pinned tools (see "Tools").
 
 Then show it (`SendUserFile` with `display: "render"`). Until a design is
 approved, the `design` gate requires a rendered HTML that is not older than
@@ -248,15 +252,21 @@ ADR, user approval, version bump. Do not edit `workflow.yaml` ad-hoc.
 
 ## Tools
 
-- `bash` >= 4, `jq`, mikefarah `yq` v4 — required for gates (python-yq is rejected)
+- `bash` >= 4 and `git` (tripwire, report) come from the system.
+- mikefarah `yq` v4, `jq` and the Mermaid library live in the project:
+  `bash harness/deps/setup.sh` fetches the versions pinned in
+  `harness/deps/deps.lock` into `harness/deps/` (git-ignored) and checks each
+  against its SHA-256. The gates use only those — a system-wide `yq` or `jq`
+  does not count, and a missing one is exit 2 (environment), where a loop
+  stops. `setup.sh` downloads about 20 MB: run it only when the user asked you
+  to. `bash harness/deps/setup.sh --check` looks without downloading.
 - whatever the `project.yaml` commands call; a Python project with
   `pyproject.toml` and no configured commands defaults to `pytest`, `ruff`,
   `behave`
 - missing tools or unconfigured commands FAIL the implement, verify and
   release gates unless `allow_missing_tools: true` in `project.yaml` (or
   `HARNESS_ALLOW_MISSING_TOOLS=1` at a terminal, not under autopilot)
-- `git` for the tripwire and the report's commit list
 
-Install with `winget install MikeFarah.yq jqlang.jq` (Windows, gates run in Git
-Bash), `brew install bash yq jq` (macOS). Python tools via
-`pip install behave pytest ruff`.
+On Windows, run the gates in Git Bash; macOS needs `brew install bash` (its
+`/bin/bash` is 3.2). Python tools belong in the project too — a virtual
+environment such as `.venv`, with the `project.yaml` commands pointing at it.

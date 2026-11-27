@@ -35,7 +35,9 @@ done
 # Project *content* must not travel: a new project starts empty. Only the
 # machinery, templates, and the meta ADRs that explain the design ship.
 rm -rf "$stage/harness/audit" \
-       "$stage/harness/docs/verify-report.md"
+       "$stage/harness/docs/verify-report.md" \
+       "$stage/harness/deps/bin" \
+       "$stage/harness/deps/vendor"
 rm -f  "$stage/harness/docs/user_stories/US-"* \
        "$stage/harness/docs/uml/"*.mmd \
        "$stage/harness/tests/features/US-"* \

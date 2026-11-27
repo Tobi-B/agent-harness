@@ -6,8 +6,9 @@
 #      After meta-0004 dropped the sha256 sign-off, four separate commits were
 #      needed to find the places that still described it; one of them was the
 #      footer of the page a reviewer looks at.
-#   2. Glue parity: the /harness commands this repo uses are hand-copied from
-#      harness/glue/ (init.sh refuses to install into its own source repo).
+#   2. Copy parity: the /harness commands this repo uses are hand-copied from
+#      harness/glue/ (init.sh refuses to install into its own source repo), and
+#      harness/deps/render.sh is a copy of the mermaid-render skill's script.
 #   3. Version bookkeeping: the workflow version that is live must have an
 #      accepted, user-approved meta ADR behind it (docs/WORKFLOW_CHANGES.md:
 #      ADR, approval, THEN version bump).
@@ -31,9 +32,12 @@ bad() {
 # the terms out to look for them.
 TOMBSTONES='signoff\.sh|signed_off|SIGNOFF_AUTO|sha256|hash-verified|auto: true'
 
+# harness/deps/ checks its downloads against pinned checksums (meta-0011) —
+# a different thing from the removed sign-off, and it has to name them.
 hits=$(git grep -nE "$TOMBSTONES" -- . \
   ':!harness/docs/adrs/meta-*.md' \
   ':!harness/docs/WORKFLOW_CHANGES.md' \
+  ':!harness/deps' \
   ':!skills/harness-init/assets' \
   ':!skills/mermaid-render/vendor' \
   ':!tools/check-repo.sh' || true)
@@ -47,11 +51,14 @@ check_pair() {
   local src="$1" installed="$2"
   [ -f "$src" ] || { bad "missing $src"; return 0; }
   [ -f "$installed" ] || { bad "missing $installed (copy it from $src)"; return 0; }
-  cmp -s "$src" "$installed" || bad "$installed differs from $src — copy the glue file over it"
+  cmp -s "$src" "$installed" || bad "$installed differs from $src — copy $src over it"
 }
 check_pair harness/glue/claude-command-harness.md   .claude/commands/harness.md
-check_pair harness/glue/opencode-command-harness.md .opencode/command/harness.md
+check_pair harness/glue/opencode-command-harness.md .opencode/commands/harness.md
 check_pair harness/glue/shellcheckrc                .shellcheckrc
+# The renderer travels with every project (meta-0011); the skill's copy is the
+# source.
+check_pair skills/mermaid-render/render.sh          harness/deps/render.sh
 
 # --- 3. version bookkeeping ----------------------------------------------------
 frontmatter_field() {
